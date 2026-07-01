@@ -14,11 +14,7 @@
 - `bash ~/.claude/lib/consult-cockpit/run.sh [repo]`（既定 cwd）→ http://127.0.0.1:8079
 - 前提: chatgpt-web の専用 Chrome(9333)サインイン済み、.env（WORKER_LLM_*）。`run.sh doctor` で確認。
 
-次にやるなら（Deferred / トリガ）:
-- Gemma 自律 consult（Gemma に「ローカル探索」と「ChatGPT consult」の2ツールを持たせ、
-  タスクの重さで自分で選ぶ）[ユーザーが実タスクで回したくなったら]。
-- 別マシン配布の実地（.env 配布 + Chrome サインイン手順の doku）[配布先が決まったら]。
-- アイドル時ミラーが 1.5s ごとに Chrome を叩く。長時間放置最適化 [常用で気になったら]。
+次にやること: `_dev/TODO.md`（単一ソース）。
 
 注意:
 - サーバは単一インスタンス（1 Chrome タブ共有）。同時起動は :8079 競合 → run.sh は既存を検知しブラウザを開くだけ。
