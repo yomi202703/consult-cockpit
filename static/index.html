@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>consult cockpit — Gemma × ChatGPT</title>
+<style>
+  :root{
+    --bg:#eef0f3; --panel:#ffffff; --edge:#e0e3e8; --ink:#1c2126;
+    --dim:#6b7280; --star:#c2680c; --gemma:#0a7d55; --cgpt:#1f6feb; --user:#7c3aed;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;
+       background:var(--bg);color:var(--ink);height:100vh;overflow:hidden;display:flex;flex-direction:column}
+  header{display:flex;align-items:center;gap:12px;padding:8px 14px;flex:0 0 auto;
+         border-bottom:1px solid var(--edge);background:var(--panel)}
+  header b{font-weight:700;letter-spacing:.2px}
+  header .sub{color:var(--dim)}
+  #status{margin-left:auto;font-size:12px;color:var(--dim)}
+  #status .dot{display:inline-block;width:8px;height:8px;border-radius:50%;
+               background:#c2c7cf;margin-right:5px;vertical-align:middle}
+  #status.ok .dot{background:var(--gemma)} #status.bad .dot{background:#d1453b}
+  .grid{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:1fr 1fr 1fr}
+  .lane{display:flex;flex-direction:column;min-width:0;min-height:0;
+        border-right:1px solid var(--edge);background:var(--panel)}
+  .lane:last-child{border-right:none}
+  .lane h2{margin:0;padding:8px 12px;font-size:11px;font-weight:700;flex:0 0 auto;
+           border-bottom:1px solid var(--edge);color:var(--dim);
+           text-transform:uppercase;letter-spacing:.7px}
+  .lane.cgpt h2{color:var(--cgpt)} .lane.star h2{color:var(--star)} .lane.gemma h2{color:var(--gemma)}
+  .lane h2 small{float:right;color:var(--dim);font-weight:400;text-transform:none;letter-spacing:0}
+  .body{flex:1 1 auto;min-height:0;overflow-y:auto;padding:10px 12px}
+  .turn{margin:0 0 14px}
+  .turn .role{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px;font-weight:700}
+  .turn.user .role{color:var(--user)}
+  .turn.assistant .role{color:var(--cgpt)}
+  .turn pre{margin:0;white-space:pre-wrap;word-break:break-word;font:inherit}
+  /* middle lane = fetch traffic (the star) */
+  .ev{padding:6px 9px;margin:0 0 6px;border-left:3px solid var(--edge);background:#f7f8fa;border-radius:0 4px 4px 0}
+  .ev.fetch{border-left-color:var(--star);background:#fdf6ee}
+  .ev.fetch.gemma{border-left-color:var(--gemma);background:#f0faf5}
+  .ev.fetch.gemma code{color:var(--gemma)}
+  .ev.served{border-left-color:#c2c7cf;color:var(--dim)}
+  .ev.consult,.ev.explore{border-left-color:var(--cgpt);color:var(--dim)}
+  .ev.explore{border-left-color:var(--gemma)}
+  .ev.answer{border-left-color:var(--gemma);background:#f0faf5}
+  .ev .rnd{color:var(--dim);font-size:11px}
+  .ev .who{font-weight:700;font-size:10px;padding:0 5px;border-radius:3px;margin-right:5px}
+  .ev .who.chatgpt{color:var(--cgpt);background:#e8f0fe}
+  .ev .who.gemma{color:var(--gemma);background:#e6f6ee}
+  .ev code{color:var(--star);word-break:break-word;font-weight:600}
+  .foot{border-top:1px solid var(--edge);padding:8px;background:var(--panel);display:flex;gap:6px;flex:0 0 auto}
+  .foot input,.foot textarea{flex:1;min-width:0;background:#fff;border:1px solid var(--edge);
+    color:var(--ink);border-radius:6px;padding:7px 9px;font:inherit;resize:none}
+  .foot input:focus,.foot textarea:focus{outline:none;border-color:var(--cgpt)}
+  .foot #repo{flex:0 0 34%}
+  .foot button{background:#f3f4f6;border:1px solid var(--edge);color:var(--ink);
+    border-radius:6px;padding:0 13px;cursor:pointer;font:inherit;font-weight:600;white-space:nowrap}
+  .foot button:hover{background:#e9ebee}
+  .foot button.go{border-color:var(--gemma);color:var(--gemma)}
+  .foot button.go:hover{background:#e8f6ef}
+  .foot button.fwd{border-color:var(--star);color:var(--star)}
+  .foot button.fwd:hover{background:#fbf0e2}
+  .actbar{display:flex;align-items:center;gap:6px;padding:5px 12px;flex:0 0 auto;border-top:1px solid var(--edge)}
+  .actbar button{background:#f3f4f6;border:1px solid var(--edge);border-radius:6px;
+    padding:3px 10px;cursor:pointer;font:inherit;font-weight:600;white-space:nowrap}
+  .actbar button.fwd{border-color:var(--star);color:var(--star)}
+  .actbar button.fwd:hover{background:#fbf0e2}
+  .actbar button.exp{border-color:var(--gemma);color:var(--gemma)}
+  .actbar button.exp:hover{background:#e8f6ef}
+  .actbar .note{color:var(--dim);font-size:10px;min-width:0}
+  .hint{color:var(--dim);font-size:11px;padding:4px 12px;flex:0 0 auto}
+  .invariant{color:var(--dim);font-size:10px;padding:5px 12px;border-top:1px dashed var(--edge);flex:0 0 auto}
+</style>
+</head>
+<body>
+<header>
+  <b>consult cockpit</b>
+  <span class="sub">repo → ChatGPT が読む → Gemma へ手渡し</span>
+  <span id="status" class="bad"><span class="dot"></span>ChatGPT: …</span>
+</header>
+
+<div class="grid">
+  <!-- LEFT: ChatGPT mirror -->
+  <section class="lane cgpt">
+    <h2>ChatGPT <small>本物タブのミラー</small></h2>
+    <div class="body" id="mirror"></div>
+    <div class="foot">
+      <input id="repo" value="~/pi-workspace/nav-demo" title="consult 対象 repo" spellcheck="false">
+      <input id="q" placeholder="repo への質問…" spellcheck="false"
+             onkeydown="if(event.key==='Enter'){event.preventDefault();consult()}">
+      <button class="go" onclick="consult()">consult ▶</button>
+    </div>
+  </section>
+
+  <!-- MIDDLE: fetch traffic (star) -->
+  <section class="lane star">
+    <h2>fetch traffic <small>今どのファイルを読んでいるか</small></h2>
+    <div class="body" id="traffic"></div>
+    <div class="invariant">repo 本文はこのレーンと ChatGPT にしか出ない。Gemma の context には入らない。</div>
+  </section>
+
+  <!-- RIGHT: Gemma chat -->
+  <section class="lane gemma">
+    <h2>Gemma <small id="gstate">idle</small></h2>
+    <div class="body" id="gemma"></div>
+    <div class="actbar">
+      <button class="fwd" onclick="forward()" title="ChatGPT の最終回答を Gemma に渡す(テキストのみ・上限8KB)">forward ⇥</button>
+      <button class="exp" onclick="explore()" title="左のrepoを Gemma が自分でローカル探索(fetchループ)">explore repo ▶</button>
+      <span class="note">send=雑談 / explore=左のrepoを Gemma が読む</span>
+    </div>
+    <div class="foot">
+      <textarea id="g" rows="1" placeholder="Gemma に話す… (explore は入力をタスクとして使う)"
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();gsend()}"></textarea>
+      <button class="go" onclick="gsend()">send</button>
+    </div>
+  </section>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => (s||'').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+function atBottom(el){return el.scrollHeight - el.scrollTop - el.clientHeight < 40;}
+function scroll(el){el.scrollTop = el.scrollHeight;}
+
+// ---- left: ChatGPT mirror. Skip re-render when unchanged (stops flicker) ----
+let mirrorSig = '';
+function renderMirror(turns){
+  const sig = JSON.stringify(turns||[]);
+  if(sig === mirrorSig) return;            // no change → no repaint (kills カチカチ)
+  mirrorSig = sig;
+  const el = $('mirror'); const stick = atBottom(el);
+  el.innerHTML = (turns||[]).map(t =>
+    `<div class="turn ${t.role==='user'?'user':'assistant'}"><div class="role">${esc(t.role)}</div>`+
+    `<pre>${esc(t.text)}</pre></div>`).join('');
+  if(stick) scroll(el);
+}
+
+// ---- middle: fetch traffic ----
+function traffic(html, cls){
+  const el = $('traffic'); const stick = atBottom(el);
+  const d = document.createElement('div'); d.className = 'ev '+cls; d.innerHTML = html;
+  el.appendChild(d); if(stick) scroll(el);
+}
+
+// ---- right: Gemma chat ----
+let gCur = null;
+function gTurn(role, text){
+  const el = $('gemma');
+  const d = document.createElement('div'); d.className = 'turn '+(role==='user'?'user':'assistant');
+  d.innerHTML = `<div class="role">${esc(role)}</div><pre>${esc(text||'')}</pre>`;
+  el.appendChild(d); scroll(el); return d.querySelector('pre');
+}
+
+// pre-fill the repo field with the repo the cockpit was launched against
+fetch('/state').then(r=>r.json()).then(s=>{ if(s.default_repo) $('repo').value = s.default_repo; }).catch(()=>{});
+
+// ---- SSE ----
+const ev = new EventSource('/events');
+ev.onmessage = e => {
+  let m; try{ m = JSON.parse(e.data); }catch(_){ return; }
+  switch(m.event){
+    case 'status': {
+      const s = $('status'); const ok = m.chatgpt==='connected';
+      s.className = ok?'ok':'bad';
+      s.innerHTML = `<span class="dot"></span>ChatGPT: ${esc(m.chatgpt)}`+(m.detail?` — ${esc(m.detail).slice(0,60)}`:'');
+      break; }
+    case 'mirror': renderMirror(m.turns); break;
+    case 'consult':
+      traffic(`<span class="rnd">consult</span> ${esc(m.status)}${m.repo?' · '+esc(m.repo):''}${m.detail?' · '+esc(m.detail):''}`, 'consult');
+      break;
+    case 'explore':
+      traffic(`<span class="rnd">gemma explore</span> ${esc(m.status)}${m.repo?' · '+esc(m.repo):''}`, 'explore');
+      break;
+    case 'fetch': {
+      const who = m.who||'chatgpt';
+      traffic(`<span class="who ${who}">${who}</span><span class="rnd">round ${m.round} · fetch</span><br><code>${esc(m.names)}</code>`, 'fetch '+who);
+      break; }
+    case 'served': {
+      const who = m.who||'chatgpt';
+      const dest = who==='gemma' ? 'Gemma(一時context)' : 'ChatGPT';
+      traffic(`<span class="who ${who}">${who}</span><span class="rnd">round ${m.round}</span> 配膳 ${m.bytes} bytes → ${dest}`, 'served');
+      break; }
+    case 'answer':
+      traffic(`<span class="rnd">answer</span> ChatGPT が回答 (${(m.text||'').length} chars)${m.note?' · '+esc(m.note):''} — forward ⇥ で Gemma へ`, 'answer');
+      break;
+    case 'gemma': onGemma(m); break;
+  }
+};
+
+function onGemma(m){
+  switch(m.status){
+    case 'history': case 'msg': gTurn(m.role, m.content);
+      if(m.status==='msg') $('gstate').textContent = 'idle'; break;
+    case 'start': case 'forwarded':
+      gTurn(m.role||'user', m.content);
+      $('gstate').textContent = m.status==='forwarded'?'idle':'thinking…'; break;
+    case 'exploring': $('gstate').textContent = `exploring… round ${m.round}`; break;
+    case 'delta':
+      if(!gCur) gCur = gTurn('assistant','');
+      gCur.textContent += m.content; scroll($('gemma')); break;
+    case 'done': gCur = null; $('gstate').textContent = 'idle'; break;
+    case 'busy': $('gstate').textContent = 'busy — 前の応答を待って'; break;
+    case 'error': gCur = null; $('gstate').textContent = 'error'; traffic('gemma error: '+esc(m.detail),'served'); break;
+  }
+}
+
+// ---- actions ----
+async function post(path, body){
+  const r = await fetch(path, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body||{})});
+  return r.json().catch(()=>({}));
+}
+function consult(){
+  const question = $('q').value.trim(); if(!question) return;
+  post('/consult', {repo:$('repo').value.trim(), question});
+  $('q').value='';
+}
+function gsend(){
+  const message = $('g').value.trim(); if(!message) return;
+  post('/gemma', {message}); $('g').value='';
+}
+function explore(){
+  const task = $('g').value.trim(); if(!task) return;
+  post('/gemma-explore', {repo:$('repo').value.trim(), task}); $('g').value='';
+}
+function forward(){ post('/forward', {}); }
+</script>
+</body>
+</html>

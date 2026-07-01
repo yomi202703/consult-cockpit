@@ -1,0 +1,11 @@
+# Secrets — the Gemma endpoint credentials. Shippable internally, never committed.
+.env
+.env.local
+*.key
+
+# Python (regenerable)
+__pycache__/
+*.py[cod]
+
+# macOS
+.DS_Store

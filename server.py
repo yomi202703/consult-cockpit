@@ -1,0 +1,515 @@
+"""consult-cockpit — Gemma × ChatGPT 3-lane observation cockpit.
+
+One process. Runs under improver's .venv (py3.12 + httpx); the dependency-free
+chatgpt-web/scripts (nav/ask/cdp, stdlib only) are put on sys.path so we import
+both. stdlib ThreadingHTTPServer + Server-Sent Events; no web framework.
+
+Lanes:
+  left   = ChatGPT mirror (the real signed-in tab, read over CDP)
+  middle = fetch traffic (what files ChatGPT is reading, via nav's serve loop)  <- the star
+  right  = Gemma free-form chat (streamed from the local OpenAI-compat endpoint)
+
+CDP tab is a single shared resource: ALL ws access is serialized onto one
+"tab controller" thread (command queue). Gemma chat never touches CDP, so it
+runs on request threads concurrently.
+
+Context invariant (the whole point): repo file bodies (run_commands output) go
+ONLY to the ChatGPT tab and to the middle lane as command names + byte counts —
+never into Gemma's history. /forward ships only ChatGPT's final answer, capped.
+"""
+from __future__ import annotations
+
+import json
+import os
+import queue
+import re
+import sys
+import threading
+import time
+import traceback
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+# --- path bridge: only the chatgpt-web scripts (stdlib-only). No improver, no
+#     venv — the cockpit reads the .env itself (env.py) and talks to Gemma over
+#     stdlib urllib, so it runs under a bare python3 anywhere. -----------------
+HERE = os.path.dirname(os.path.abspath(__file__))
+SCRIPTS = os.environ.get("COCKPIT_SCRIPTS") or os.path.expanduser(
+    "~/.claude/skills/chatgpt-web/scripts")
+for p in (HERE, SCRIPTS):
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
+import nav  # noqa: E402  (connect/get_state/find_fetch/run_commands/send_message/...)
+import env as cockpit_env  # noqa: E402
+from gemma_chat import stream_chat  # noqa: E402
+
+PORT = int(os.environ.get("COCKPIT_PORT", "8079"))
+DEFAULT_REPO = os.environ.get("COCKPIT_REPO") or os.path.expanduser(
+    "~/pi-workspace/nav-demo")
+FORWARD_CAP = 8 * 1024        # max ChatGPT answer bytes handed to Gemma
+MAX_CONSULT_ROUNDS = 8
+GEMMA_EXPLORE_ROUNDS = 4      # keep it snappy: Gemma explores locally in few rounds
+
+_FENCE_RE = re.compile(r"```([\w-]*)\s*\n(.*?)```", re.DOTALL)
+
+
+def parse_fetch_text(text: str):
+    """Extract fetch commands from a raw LLM reply (Gemma has no DOM to read).
+    Prefer a fenced ```fetch block; else any fenced block that is all commands;
+    else scan for bare READ/GREP/LS/TREE lines. run_commands ignores non-command
+    lines anyway, so a loose match is safe."""
+    text = text or ""
+    for lang, body in _FENCE_RE.findall(text):
+        lines = [l for l in body.splitlines() if l.strip()]
+        if not lines:
+            continue
+        if lang.lower() == "fetch":
+            return lines
+        if all(nav.CMD_RE.match(l) for l in lines):
+            return lines
+    bare = [l for l in text.splitlines() if nav.CMD_RE.match(l)]
+    return bare or None
+
+# all turns (user + assistant) of the current ChatGPT conversation, for the mirror
+MIRROR_JS = (
+    "(()=>{const a=[...document.querySelectorAll('[data-message-author-role]')];"
+    "return JSON.stringify(a.map(n=>({role:n.getAttribute('data-message-author-role'),"
+    "text:n.innerText||''})));})()"
+)
+
+# =============================================================================
+# SSE hub
+# =============================================================================
+_subs: list[queue.Queue] = []
+_subs_lock = threading.Lock()
+_last_status: dict = {"event": "status", "chatgpt": "connecting"}
+
+
+def broadcast(event: str, data: dict) -> None:
+    msg = {"event": event, **data}
+    if event == "status":
+        global _last_status
+        _last_status = msg
+    with _subs_lock:
+        dead = []
+        for q in _subs:
+            try:
+                q.put_nowait(msg)
+            except queue.Full:
+                dead.append(q)
+        for q in dead:
+            _subs.remove(q)
+
+
+def subscribe() -> queue.Queue:
+    q: queue.Queue = queue.Queue(maxsize=1000)
+    with _subs_lock:
+        _subs.append(q)
+    return q
+
+
+def unsubscribe(q: queue.Queue) -> None:
+    with _subs_lock:
+        if q in _subs:
+            _subs.remove(q)
+
+
+# =============================================================================
+# Shared state (Gemma history + last ChatGPT answer)
+# =============================================================================
+_state_lock = threading.Lock()
+_gemma_history: list[dict] = []
+_last_chatgpt_answer: str = ""
+_gemma_busy = False
+
+
+def gemma_snapshot() -> list[dict]:
+    with _state_lock:
+        return list(_gemma_history)
+
+
+# =============================================================================
+# Tab controller — the ONLY thread that touches the CDP ws
+# =============================================================================
+_cmd_q: queue.Queue = queue.Queue()   # commands: {"type": "consult", "repo":..., "question":...}
+
+
+class TabController(threading.Thread):
+    daemon = True
+
+    def __init__(self):
+        super().__init__(name="tab-controller")
+        self.ws = None
+        self.target = None
+        self._last_connect_try = 0.0
+
+    def _ensure_connected(self) -> bool:
+        if self.ws is not None:
+            return True
+        if time.time() - self._last_connect_try < 5:
+            return False
+        self._last_connect_try = time.time()
+        try:
+            self.ws, self.target = nav.connect()
+            broadcast("status", {"chatgpt": "connected"})
+            return True
+        except SystemExit as e:
+            broadcast("status", {"chatgpt": "disconnected", "detail": str(e)})
+            self.ws = None
+            return False
+        except Exception as e:  # noqa: BLE001
+            broadcast("status", {"chatgpt": "disconnected", "detail": repr(e)})
+            self.ws = None
+            return False
+
+    def _emit_mirror(self) -> None:
+        if self.ws is None:
+            return
+        try:
+            raw = self.ws.evaluate(MIRROR_JS)
+            turns = json.loads(raw) if isinstance(raw, str) else []
+            broadcast("mirror", {"turns": turns})
+        except Exception:  # noqa: BLE001
+            # a dead ws surfaces here; drop it so we reconnect next tick
+            self.ws = None
+
+    def _run_consult(self, root: str, question: str) -> None:
+        global _last_chatgpt_answer
+        if not self._ensure_connected():
+            broadcast("consult", {"status": "error",
+                                  "detail": "ChatGPT tab not reachable"})
+            return
+        root = os.path.abspath(os.path.expanduser(root))
+        if not os.path.isdir(root):
+            broadcast("consult", {"status": "error", "detail": f"not a dir: {root}"})
+            return
+        broadcast("consult", {"status": "start", "repo": os.path.basename(root)})
+        try:
+            self.ws.evaluate(nav.NEWCHAT_JS)
+            time.sleep(1.5)
+            base = nav.get_state(self.ws).get("count", 0)
+            nav.send_message(self.ws, nav.build_brief(root, question))
+            broadcast("consult", {"status": "briefed"})
+            cur = base
+            for i in range(MAX_CONSULT_ROUNDS):
+                self.ws, st = nav.wait_complete(self.ws, self.target, after_count=cur)
+                cur = st.get("count", cur)
+                self._emit_mirror()
+                cmds = nav.find_fetch(st.get("blocks", []))
+                if not cmds:
+                    answer = st.get("text", "").strip()
+                    with _state_lock:
+                        _last_chatgpt_answer = answer
+                    broadcast("answer", {"text": answer})
+                    broadcast("consult", {"status": "done", "rounds": i})
+                    return
+                names = " | ".join(l.strip() for l in cmds if l.strip())[:300]
+                broadcast("fetch", {"names": names, "round": i + 1, "who": "chatgpt"})
+                reply = nav.run_commands(root, cmds)          # repo bodies -> ChatGPT only
+                nav.send_message(self.ws, reply)
+                broadcast("served", {"bytes": len(reply), "round": i + 1, "who": "chatgpt"})
+                time.sleep(2)
+            # ran out of rounds
+            answer = nav.get_state(self.ws).get("text", "").strip()
+            with _state_lock:
+                _last_chatgpt_answer = answer
+            broadcast("answer", {"text": answer, "note": "max_rounds"})
+            broadcast("consult", {"status": "done", "rounds": MAX_CONSULT_ROUNDS})
+        except Exception as e:  # noqa: BLE001
+            broadcast("consult", {"status": "error", "detail": repr(e)})
+            self.ws = None
+
+    def run(self) -> None:
+        self._ensure_connected()
+        while True:
+            try:
+                cmd = _cmd_q.get(timeout=1.5)
+            except queue.Empty:
+                # idle: keep the left pane live and heal a dropped connection
+                if self._ensure_connected():
+                    self._emit_mirror()
+                continue
+            try:
+                if cmd.get("type") == "consult":
+                    self._run_consult(cmd["repo"], cmd["question"])
+            except Exception:  # noqa: BLE001
+                traceback.print_exc()
+
+
+CONTROLLER = TabController()
+
+
+# =============================================================================
+# Gemma chat (no CDP) — runs on its own thread, streams over SSE
+# =============================================================================
+def _run_gemma(user_msg: str) -> None:
+    global _gemma_busy
+    with _state_lock:
+        if _gemma_busy:
+            broadcast("gemma", {"status": "busy"})
+            return
+        _gemma_busy = True
+        _gemma_history.append({"role": "user", "content": user_msg})
+        history = list(_gemma_history)
+    broadcast("gemma", {"status": "start", "role": "user", "content": user_msg})
+    acc = []
+    try:
+        for tok in stream_chat(history):
+            acc.append(tok)
+            broadcast("gemma", {"status": "delta", "content": tok})
+        reply = "".join(acc)
+        with _state_lock:
+            _gemma_history.append({"role": "assistant", "content": reply})
+        broadcast("gemma", {"status": "done", "content": reply})
+    except Exception as e:  # noqa: BLE001
+        broadcast("gemma", {"status": "error", "detail": repr(e)})
+    finally:
+        with _state_lock:
+            _gemma_busy = False
+
+
+def _run_gemma_explore(repo: str, task: str) -> None:
+    """Gemma navigates the repo LOCALLY via the fetch protocol (no browser, no
+    ChatGPT). Repo bodies enter only a TRANSIENT sub-context; only the final
+    answer joins the persistent Gemma history, so follow-up chat stays lean.
+    This is the deliberate exception to the 'repo never enters Gemma' invariant:
+    the user explicitly asked Gemma to read locally. Kept snappy via a low round
+    cap + multi-file fetches (the brief allows <=8 items/turn)."""
+    global _gemma_busy
+    root = os.path.abspath(os.path.expanduser(repo))
+    with _state_lock:
+        if _gemma_busy:
+            broadcast("gemma", {"status": "busy"})
+            return
+        _gemma_busy = True
+        _gemma_history.append({"role": "user", "content": task})
+    broadcast("gemma", {"status": "start", "role": "user", "content": task})
+    if not os.path.isdir(root):
+        broadcast("gemma", {"status": "error", "detail": f"not a dir: {root}"})
+        with _state_lock:
+            _gemma_busy = False
+        return
+    broadcast("explore", {"status": "start", "repo": os.path.basename(root)})
+    transient = [{"role": "user", "content": nav.build_brief(root, task)}]
+    answer = ""
+    try:
+        for i in range(GEMMA_EXPLORE_ROUNDS):
+            broadcast("gemma", {"status": "exploring", "round": i + 1})
+            full = "".join(stream_chat(transient, max_tokens=1024))
+            cmds = parse_fetch_text(full)
+            if not cmds:
+                answer = full.strip()
+                break
+            names = " | ".join(c.strip() for c in cmds if c.strip())[:300]
+            broadcast("fetch", {"names": names, "round": i + 1, "who": "gemma"})
+            served = nav.run_commands(root, cmds)      # repo bodies -> transient only
+            broadcast("served", {"bytes": len(served), "round": i + 1, "who": "gemma"})
+            transient.append({"role": "assistant", "content": full})
+            transient.append({"role": "user", "content": served})
+        else:
+            transient.append({"role": "user", "content":
+                              "Stop fetching. Give your best final answer now "
+                              "from what you've read."})
+            answer = "".join(stream_chat(transient, max_tokens=1024)).strip()
+        with _state_lock:
+            _gemma_history.append({"role": "assistant", "content": answer})
+        broadcast("gemma", {"status": "msg", "role": "assistant", "content": answer})
+        broadcast("explore", {"status": "done"})
+    except Exception as e:  # noqa: BLE001
+        broadcast("gemma", {"status": "error", "detail": repr(e)})
+    finally:
+        with _state_lock:
+            _gemma_busy = False
+
+
+def _forward_to_gemma() -> dict:
+    """Human handoff: inject ONLY ChatGPT's last answer (capped) into Gemma
+    history as context. Repo file bodies never travel this path."""
+    with _state_lock:
+        ans = _last_chatgpt_answer
+    if not ans:
+        return {"ok": False, "detail": "no ChatGPT answer yet"}
+    capped = ans[:FORWARD_CAP]
+    truncated = len(ans) > FORWARD_CAP
+    content = ("[Forwarded: ChatGPT's repo analysis]\n\n" + capped +
+               ("\n\n[...truncated]" if truncated else ""))
+    with _state_lock:
+        _gemma_history.append({"role": "user", "content": content})
+    broadcast("gemma", {"status": "forwarded", "role": "user", "content": content})
+    return {"ok": True, "bytes": len(capped), "truncated": truncated}
+
+
+# =============================================================================
+# HTTP
+# =============================================================================
+INDEX = os.path.join(HERE, "static", "index.html")
+
+
+class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *a):  # quiet
+        pass
+
+    def _json(self, code: int, obj: dict) -> None:
+        body = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _read_json(self) -> dict:
+        n = int(self.headers.get("Content-Length", 0) or 0)
+        if not n:
+            return {}
+        try:
+            return json.loads(self.rfile.read(n) or b"{}")
+        except ValueError:
+            return {}
+
+    # ---- GET ----
+    def do_GET(self):
+        if self.path == "/" or self.path.startswith("/index"):
+            try:
+                with open(INDEX, "rb") as f:
+                    body = f.read()
+            except OSError:
+                body = b"<h1>index.html missing</h1>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path == "/state":
+            with _state_lock:
+                self._json(200, {"gemma": list(_gemma_history),
+                                 "has_answer": bool(_last_chatgpt_answer),
+                                 "default_repo": DEFAULT_REPO})
+        elif self.path == "/events":
+            self._sse()
+        else:
+            self._json(404, {"error": "not found"})
+
+    def _sse(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+        q = subscribe()
+        # replay current gemma history so a fresh page isn't blank
+        try:
+            self.wfile.write(b": connected\n\n")
+            self._sse_write(_last_status)  # current ChatGPT connection state
+            for m in gemma_snapshot():
+                self._sse_write({"event": "gemma", "status": "history", **m})
+            while True:
+                try:
+                    msg = q.get(timeout=15)
+                except queue.Empty:
+                    self.wfile.write(b": ping\n\n")  # heartbeat
+                    self.wfile.flush()
+                    continue
+                self._sse_write(msg)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            unsubscribe(q)
+
+    def _sse_write(self, msg: dict):
+        self.wfile.write(("data: " + json.dumps(msg) + "\n\n").encode())
+        self.wfile.flush()
+
+    # ---- POST ----
+    def do_POST(self):
+        body = self._read_json()
+        if self.path == "/consult":
+            repo = body.get("repo") or DEFAULT_REPO
+            question = (body.get("question") or "").strip()
+            if not question:
+                return self._json(400, {"error": "question required"})
+            _cmd_q.put({"type": "consult", "repo": repo, "question": question})
+            self._json(202, {"queued": True, "repo": repo})
+        elif self.path == "/gemma":
+            msg = (body.get("message") or "").strip()
+            if not msg:
+                return self._json(400, {"error": "message required"})
+            threading.Thread(target=_run_gemma, args=(msg,), daemon=True).start()
+            self._json(202, {"queued": True})
+        elif self.path == "/gemma-explore":
+            task = (body.get("task") or "").strip()
+            repo = body.get("repo") or DEFAULT_REPO
+            if not task:
+                return self._json(400, {"error": "task required"})
+            threading.Thread(target=_run_gemma_explore, args=(repo, task),
+                             daemon=True).start()
+            self._json(202, {"queued": True, "repo": repo})
+        elif self.path == "/forward":
+            self._json(200, _forward_to_gemma())
+        else:
+            self._json(404, {"error": "not found"})
+
+
+def doctor() -> int:
+    """Validate the four prerequisites; print pass/fail; exit non-zero on any
+    critical failure. Run before first use on a new machine."""
+    import urllib.request as _u
+    ok = True
+
+    def line(good, label, detail=""):
+        nonlocal ok
+        ok = ok and good
+        print(f"  [{'ok ' if good else 'FAIL'}] {label}"
+              + (f" — {detail}" if detail else ""))
+
+    print("consult-cockpit doctor")
+    print(f"  python {sys.version.split()[0]}")
+
+    line(os.path.isdir(SCRIPTS), "chatgpt-web scripts", SCRIPTS)
+    line("connect" in dir(nav) and "run_commands" in dir(nav),
+         "nav/ask/cdp import", "importable")
+
+    src = cockpit_env.env_source()
+    line(bool(src), ".env found", src or "none of: $COCKPIT_ENV, ./.env, improver/.env")
+    miss = cockpit_env.missing_required()
+    line(not miss, "WORKER_LLM_* keys", "missing: " + ",".join(miss) if miss else
+         os.environ.get("WORKER_LLM_MODEL", ""))
+
+    try:
+        with _u.urlopen("http://127.0.0.1:9333/json/version", timeout=3):
+            chrome = True
+    except Exception:  # noqa: BLE001
+        chrome = False
+    line(chrome, "dedicated Chrome :9333", "reachable" if chrome else
+         "down — start via chatgpt-web (ask.py ping) and sign in")
+
+    if not miss:
+        try:
+            toks = list(stream_chat([{"role": "user", "content": "ping"}],
+                                    max_tokens=4, timeout=30))
+            line(bool(toks), "Gemma endpoint", "streamed a token")
+        except Exception as e:  # noqa: BLE001
+            line(False, "Gemma endpoint", repr(e)[:80])
+    else:
+        line(False, "Gemma endpoint", "skipped (keys missing)")
+
+    print("  =>", "ALL GOOD" if ok else "problems above — fix before launch")
+    return 0 if ok else 1
+
+
+def main():
+    if len(sys.argv) > 1 and sys.argv[1] in ("doctor", "--doctor"):
+        sys.exit(doctor())
+    print(f"[cockpit] repo → {DEFAULT_REPO}", flush=True)
+    CONTROLLER.start()
+    srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    print(f"[cockpit] http://127.0.0.1:{PORT}  (Ctrl-C to stop)", flush=True)
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        print("\n[cockpit] bye", flush=True)
+
+
+if __name__ == "__main__":
+    main()
