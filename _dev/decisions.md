@@ -2,6 +2,19 @@
 
 過去エントリは書き換えない。
 
+## 2026-07-03 UI磨き＋モックLLMで「テストむずい」を潰す
+
+- UI(操作性、html-deck/review-server の規律を適用): ボタンが作業状態を語る(consult…
+  round N・busy 中 disabled)、answer は本文カード＋forward をその場に(3ホップ→1ホップ、
+  リロード時も /state の last_answer から復元)、巨大 brief は折り畳み、textarea 自動伸長
+  ＋Enter/Shift+Enter、repo 欄を独立行、説明注釈は現物で置換(explore を入力欄の隣へ)、
+  worker 下段を2段化(1/3幅でのボタン見切れ修正)。/state に last_answer 追加。
+- テスト困難の正体 = SSE＋非同期＋LLM の非決定性＋consult 40秒。処方 = tests/mock_llm.py
+  (決定的・即答の OpenAI 互換 SSE。brief を見たら fetch を1回出し、配膳を見たら固定回答)。
+  tests/test_e2e.py が mock＋cockpit を子プロセスで立て、実 HTTP で chat/explore/consult/
+  forward/不変条件/旧alias404 を検証。スイート全体(17本)で ~1秒。
+- 手動 UI 確認もモックで: README のテスト節にコマンド。実 LLM は doctor が担当(疎通1発)。
+
 ## 2026-07-03 scrape reader を repo に vendor（主役復帰）
 
 - 背景: オーナー確定「reader に API 課金はしない(するなら Claude Code に課金する)」。

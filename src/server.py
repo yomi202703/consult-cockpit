@@ -499,6 +499,7 @@ class Handler(BaseHTTPRequestHandler):
             with _state_lock:
                 self._json(200, {"worker": list(_worker_history),
                                  "has_answer": bool(_last_reader_answer),
+                                 "last_answer": _last_reader_answer,
                                  "default_repo": DEFAULT_REPO,
                                  "worker_model": wcfg.model if wcfg else "",
                                  "reader_mode": rmode,

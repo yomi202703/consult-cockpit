@@ -74,7 +74,20 @@ repo の本文は「中央レーン」と「左(reader タブ)」にしか出さ
 ## テスト
 
 ```
-python3 -m unittest discover tests   # 純粋層のスモーク(ネットワーク・キーチェーン非使用)
+python3 -m unittest discover tests   # スモーク + e2e、全部で ~1秒
+```
+
+e2e はモック LLM(`tests/mock_llm.py`、決定的・即答の OpenAI 互換サーバ)に両レーンを
+向けて、chat / explore / consult / forward / 不変条件を実 HTTP で検証する。
+実エンドポイント・キー・ブラウザ不要。
+
+UI を手で触って確認する時もモックが速い(consult が1秒未満で返る):
+
+```
+python3 tests/mock_llm.py &          # :8199
+WORKER_LLM_BASE_URL=http://127.0.0.1:8199/v1 WORKER_LLM_MODEL=mock \
+READER_LLM_BASE_URL=http://127.0.0.1:8199/v1 READER_LLM_MODEL=mock \
+COCKPIT_ENV=/dev/null bash run.sh
 ```
 
 ## ライセンス

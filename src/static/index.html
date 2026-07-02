@@ -36,6 +36,10 @@
   .turn.user .role{color:var(--user)}
   .turn.assistant .role{color:var(--reader)}
   .turn pre{margin:0;white-space:pre-wrap;word-break:break-word;font:inherit}
+  .turn details summary{cursor:pointer;color:var(--dim);list-style:none}
+  .turn details summary::before{content:'▸ ';color:var(--dim)}
+  .turn details[open] summary::before{content:'▾ '}
+  .turn details summary:hover{color:var(--ink)}
   /* middle lane = fetch traffic (the star) */
   .ev{padding:6px 9px;margin:0 0 6px;border-left:3px solid var(--edge);background:#f7f8fa;border-radius:0 4px 4px 0}
   .ev.fetch{border-left-color:var(--star);background:#fdf6ee}
@@ -44,33 +48,38 @@
   .ev.served{border-left-color:#c2c7cf;color:var(--dim)}
   .ev.consult,.ev.explore{border-left-color:var(--reader);color:var(--dim)}
   .ev.explore{border-left-color:var(--worker)}
-  .ev.answer{border-left-color:var(--worker);background:#f0faf5}
   .ev .rnd{color:var(--dim);font-size:11px}
+  .ev .ts{float:right;color:#a9afba;font-size:10px}
   .ev .who{font-weight:700;font-size:10px;padding:0 5px;border-radius:3px;margin-right:5px}
   .ev .who.reader{color:var(--reader);background:#e8f0fe}
   .ev .who.worker{color:var(--worker);background:#e6f6ee}
   .ev code{color:var(--star);word-break:break-word;font-weight:600}
-  .foot{border-top:1px solid var(--edge);padding:8px;background:var(--panel);display:flex;gap:6px;flex:0 0 auto}
+  /* the answer card: the artifact, not a count */
+  .card{border:1px solid var(--worker);border-radius:6px;margin:0 0 8px;background:#f0faf5;overflow:hidden}
+  .card .bar{display:flex;align-items:center;gap:8px;padding:6px 9px;border-bottom:1px dashed var(--edge)}
+  .card .bar .t{font-weight:700;color:var(--worker);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+  .card .bar button{margin-left:auto;background:#fff;border:1px solid var(--star);color:var(--star);
+    border-radius:5px;padding:2px 10px;cursor:pointer;font:inherit;font-weight:600}
+  .card .bar button:hover{background:#fbf0e2}
+  .card .bar button:disabled{opacity:.45;cursor:default}
+  .card pre{margin:0;padding:8px 10px;white-space:pre-wrap;word-break:break-word;font:inherit;
+            max-height:220px;overflow-y:auto}
+  .foot{border-top:1px solid var(--edge);padding:8px;background:var(--panel);display:flex;gap:6px;flex:0 0 auto;align-items:flex-end}
+  .foot.col{flex-direction:column;align-items:stretch}
+  .btnrow{display:flex;gap:6px;justify-content:flex-end}
   .foot input,.foot textarea{flex:1;min-width:0;background:#fff;border:1px solid var(--edge);
     color:var(--ink);border-radius:6px;padding:7px 9px;font:inherit;resize:none}
   .foot input:focus,.foot textarea:focus{outline:none;border-color:var(--reader)}
-  .foot #repo{flex:0 0 34%}
   .foot button{background:#f3f4f6;border:1px solid var(--edge);color:var(--ink);
-    border-radius:6px;padding:0 13px;cursor:pointer;font:inherit;font-weight:600;white-space:nowrap}
+    border-radius:6px;padding:7px 13px;cursor:pointer;font:inherit;font-weight:600;white-space:nowrap}
   .foot button:hover{background:#e9ebee}
+  .foot button:disabled{opacity:.45;cursor:default}
   .foot button.go{border-color:var(--worker);color:var(--worker)}
-  .foot button.go:hover{background:#e8f6ef}
-  .foot button.fwd{border-color:var(--star);color:var(--star)}
-  .foot button.fwd:hover{background:#fbf0e2}
-  .actbar{display:flex;align-items:center;gap:6px;padding:5px 12px;flex:0 0 auto;border-top:1px solid var(--edge)}
-  .actbar button{background:#f3f4f6;border:1px solid var(--edge);border-radius:6px;
-    padding:3px 10px;cursor:pointer;font:inherit;font-weight:600;white-space:nowrap}
-  .actbar button.fwd{border-color:var(--star);color:var(--star)}
-  .actbar button.fwd:hover{background:#fbf0e2}
-  .actbar button.exp{border-color:var(--worker);color:var(--worker)}
-  .actbar button.exp:hover{background:#e8f6ef}
-  .actbar .note{color:var(--dim);font-size:10px;min-width:0}
-  .hint{color:var(--dim);font-size:11px;padding:4px 12px;flex:0 0 auto}
+  .foot button.go:hover:not(:disabled){background:#e8f6ef}
+  .repo-row{display:flex;gap:6px;padding:8px 8px 0;background:var(--panel);flex:0 0 auto}
+  .repo-row input{flex:1;min-width:0;background:#fff;border:1px solid var(--edge);color:var(--ink);
+    border-radius:6px;padding:5px 9px;font:12px/1.4 inherit}
+  .repo-row .lbl{color:var(--dim);font-size:11px;align-self:center;flex:0 0 auto}
   .invariant{color:var(--dim);font-size:10px;padding:5px 12px;border-top:1px dashed var(--edge);flex:0 0 auto}
 </style>
 </head>
@@ -82,15 +91,15 @@
 </header>
 
 <div class="grid">
-  <!-- LEFT: reader mirror (ChatGPT tab over CDP, or disabled) -->
+  <!-- LEFT: reader mirror -->
   <section class="lane reader">
     <h2>reader <small id="rlabel">…</small></h2>
     <div class="body" id="mirror"></div>
+    <div class="repo-row"><span class="lbl">repo</span>
+      <input id="repo" value="." spellcheck="false" title="consult / explore の対象 repo(絶対パス可)"></div>
     <div class="foot">
-      <input id="repo" value="." title="consult 対象 repo" spellcheck="false">
-      <input id="q" placeholder="repo への質問…" spellcheck="false"
-             onkeydown="if(event.key==='Enter'){event.preventDefault();consult()}">
-      <button class="go" onclick="consult()">consult ▶</button>
+      <textarea id="q" rows="1" placeholder="repo への質問… (Enter で consult)" spellcheck="false"></textarea>
+      <button class="go" id="consultBtn" onclick="consult()">consult ▶</button>
     </div>
   </section>
 
@@ -105,15 +114,13 @@
   <section class="lane worker">
     <h2>worker <small id="wstate">idle</small></h2>
     <div class="body" id="worker"></div>
-    <div class="actbar">
-      <button class="fwd" onclick="forward()" title="reader の最終回答を worker に渡す(テキストのみ・上限8KB)">forward ⇥</button>
-      <button class="exp" onclick="explore()" title="左のrepoを worker が自分でローカル探索(fetchループ)">explore repo ▶</button>
-      <span class="note">send=雑談 / explore=左のrepoを worker が読む</span>
-    </div>
-    <div class="foot">
-      <textarea id="w" rows="1" placeholder="worker に話す… (explore は入力をタスクとして使う)"
-        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();wsend()}"></textarea>
-      <button class="go" onclick="wsend()">send</button>
+    <div class="foot col">
+      <textarea id="w" rows="1" placeholder="worker に話す… (Enter=send / Shift+Enter=改行)"></textarea>
+      <div class="btnrow">
+        <button id="exploreBtn" onclick="explore()"
+          title="↑の入力をタスクとして、左の repo を worker 自身がローカル探索する">explore repo ▶</button>
+        <button class="go" id="sendBtn" onclick="wsend()">send</button>
+      </div>
     </div>
   </section>
 </div>
@@ -121,26 +128,59 @@
 <script>
 const $ = id => document.getElementById(id);
 const esc = s => (s||'').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const ts = () => new Date().toTimeString().slice(0,8);
 function atBottom(el){return el.scrollHeight - el.scrollTop - el.clientHeight < 40;}
 function scroll(el){el.scrollTop = el.scrollHeight;}
+function autogrow(el){el.style.height='auto';el.style.height=Math.min(el.scrollHeight,120)+'px';}
+['q','w'].forEach(id=>$(id).addEventListener('input',e=>autogrow(e.target)));
 
-// ---- left: reader mirror. Skip re-render when unchanged (stops flicker) ----
+// ---- busy state drives the buttons (no dead 40s) ----
+let consultBusy=false, workerBusy=false;
+function paintButtons(){
+  const c=$('consultBtn'); c.disabled=consultBusy;
+  if(!consultBusy) c.textContent='consult ▶';
+  $('sendBtn').disabled=workerBusy; $('exploreBtn').disabled=workerBusy;
+}
+
+// ---- left: reader mirror. Long turns (the brief) collapse to a summary ----
 let mirrorSig = '';
+function turnHTML(t){
+  const role=t.role==='user'?'user':'assistant';
+  const body = t.text||'';
+  let inner;
+  if(body.length>500){
+    const head=esc(body.split('\n')[0].slice(0,90));
+    inner=`<details><summary>${head}… (${body.length} chars)</summary><pre>${esc(body)}</pre></details>`;
+  }else{
+    inner=`<pre>${esc(body)}</pre>`;
+  }
+  return `<div class="turn ${role}"><div class="role">${esc(t.role)}</div>${inner}</div>`;
+}
 function renderMirror(turns){
   const sig = JSON.stringify(turns||[]);
   if(sig === mirrorSig) return;            // no change → no repaint (kills カチカチ)
   mirrorSig = sig;
   const el = $('mirror'); const stick = atBottom(el);
-  el.innerHTML = (turns||[]).map(t =>
-    `<div class="turn ${t.role==='user'?'user':'assistant'}"><div class="role">${esc(t.role)}</div>`+
-    `<pre>${esc(t.text)}</pre></div>`).join('');
+  const open = new Set([...el.querySelectorAll('details[open]')].map((d,i)=>i)); // keep opened ones
+  el.innerHTML = (turns||[]).map(turnHTML).join('');
+  [...el.querySelectorAll('details')].forEach((d,i)=>{ if(open.has(i)) d.open=true; });
   if(stick) scroll(el);
 }
 
 // ---- middle: fetch traffic ----
 function traffic(html, cls){
   const el = $('traffic'); const stick = atBottom(el);
-  const d = document.createElement('div'); d.className = 'ev '+cls; d.innerHTML = html;
+  const d = document.createElement('div'); d.className = 'ev '+cls;
+  d.innerHTML = `<span class="ts">${ts()}</span>`+html;
+  el.appendChild(d); if(stick) scroll(el);
+}
+// the answer itself lands here as a card, forward inline (no hunt in the mirror)
+function answerCard(text, note){
+  const el = $('traffic'); const stick = atBottom(el);
+  const d = document.createElement('div'); d.className='card';
+  d.innerHTML = `<div class="bar"><span class="t">answer${note?' · '+esc(note):''}</span>`+
+    `<button onclick="forward(this)">forward ⇥ worker</button></div>`+
+    `<pre>${esc(text)}</pre>`;
   el.appendChild(d); if(stick) scroll(el);
 }
 
@@ -153,7 +193,7 @@ function wTurn(role, text){
   el.appendChild(d); scroll(el); return d.querySelector('pre');
 }
 
-// lane labels from live config: worker shows its model, reader its mode
+// lane labels from live config
 fetch('/state').then(r=>r.json()).then(s=>{
   if(s.default_repo) $('repo').value = s.default_repo;
   const w = $('worker').closest('.lane').querySelector('h2');
@@ -162,6 +202,7 @@ fetch('/state').then(r=>r.json()).then(s=>{
     : s.reader_mode==='api' ? (s.reader_model||'API')+' (API)'
     : 'ChatGPT (web) 本物タブのミラー';
   if(s.worker_model) document.title = `consult cockpit — ${s.worker_model} × reader`;
+  if(s.last_answer) answerCard(s.last_answer, '前回');   // reload keeps the forward path
 }).catch(()=>{});
 
 // ---- SSE ----
@@ -176,6 +217,9 @@ ev.onmessage = e => {
       break; }
     case 'mirror': renderMirror(m.turns); break;
     case 'consult':
+      if(m.status==='start'||m.status==='briefed') consultBusy=true;
+      if(m.status==='done'||m.status==='error') consultBusy=false;
+      paintButtons();
       traffic(`<span class="rnd">consult</span> ${esc(m.status)}${m.repo?' · '+esc(m.repo):''}${m.detail?' · '+esc(m.detail):''}`, 'consult');
       break;
     case 'explore':
@@ -183,6 +227,7 @@ ev.onmessage = e => {
       break;
     case 'fetch': {
       const who = m.who||'reader';
+      if(who==='reader' && consultBusy){ $('consultBtn').textContent = `consult… round ${m.round}`; }
       traffic(`<span class="who ${who}">${who}</span><span class="rnd">round ${m.round} · fetch</span><br><code>${esc(m.names)}</code>`, 'fetch '+who);
       break; }
     case 'served': {
@@ -190,9 +235,7 @@ ev.onmessage = e => {
       const dest = who==='worker' ? 'worker(一時context)' : 'reader';
       traffic(`<span class="who ${who}">${who}</span><span class="rnd">round ${m.round}</span> 配膳 ${m.bytes} bytes → ${dest}`, 'served');
       break; }
-    case 'answer':
-      traffic(`<span class="rnd">answer</span> reader が回答 (${(m.text||'').length} chars)${m.note?' · '+esc(m.note):''} — forward ⇥ で worker へ`, 'answer');
-      break;
+    case 'answer': answerCard(m.text||'', m.note); break;
     case 'worker': onWorker(m); break;
   }
 };
@@ -200,17 +243,19 @@ ev.onmessage = e => {
 function onWorker(m){
   switch(m.status){
     case 'history': case 'msg': wTurn(m.role, m.content);
-      if(m.status==='msg') $('wstate').textContent = 'idle'; break;
+      if(m.status==='msg'){ workerBusy=false; $('wstate').textContent='idle'; paintButtons(); } break;
     case 'start': case 'forwarded':
       wTurn(m.role||'user', m.content);
-      $('wstate').textContent = m.status==='forwarded'?'idle':'thinking…'; break;
-    case 'exploring': $('wstate').textContent = `exploring… round ${m.round}`; break;
+      workerBusy = m.status!=='forwarded';
+      $('wstate').textContent = m.status==='forwarded'?'idle':'thinking…'; paintButtons(); break;
+    case 'exploring': workerBusy=true; $('wstate').textContent = `exploring… round ${m.round}`; paintButtons(); break;
     case 'delta':
       if(!wCur) wCur = wTurn('assistant','');
       wCur.textContent += m.content; scroll($('worker')); break;
-    case 'done': wCur = null; $('wstate').textContent = 'idle'; break;
+    case 'done': wCur=null; workerBusy=false; $('wstate').textContent='idle'; paintButtons(); break;
     case 'busy': $('wstate').textContent = 'busy — 前の応答を待って'; break;
-    case 'error': wCur = null; $('wstate').textContent = 'error'; traffic('worker error: '+esc(m.detail),'served'); break;
+    case 'error': wCur=null; workerBusy=false; consultBusy=false; paintButtons();
+      $('wstate').textContent = 'error'; traffic('worker error: '+esc(m.detail),'served'); break;
   }
 }
 
@@ -220,19 +265,26 @@ async function post(path, body){
   return r.json().catch(()=>({}));
 }
 function consult(){
-  const question = $('q').value.trim(); if(!question) return;
-  post('/consult', {repo:$('repo').value.trim(), question});
-  $('q').value='';
+  const question = $('q').value.trim(); if(!question||consultBusy) return;
+  consultBusy=true; paintButtons(); $('consultBtn').textContent='consult…';
+  post('/consult', {repo:$('repo').value.trim(), question}).then(r=>{
+    if(r.error){ consultBusy=false; paintButtons(); traffic('consult error: '+esc(r.error)+(r.detail?' — '+esc(r.detail):''),'served'); }
+  });
+  $('q').value=''; autogrow($('q'));
 }
 function wsend(){
-  const message = $('w').value.trim(); if(!message) return;
-  post('/worker', {message}); $('w').value='';
+  const message = $('w').value.trim(); if(!message||workerBusy) return;
+  post('/worker', {message}); $('w').value=''; autogrow($('w'));
 }
 function explore(){
-  const task = $('w').value.trim(); if(!task) return;
-  post('/worker-explore', {repo:$('repo').value.trim(), task}); $('w').value='';
+  const task = $('w').value.trim(); if(!task||workerBusy) return;
+  post('/worker-explore', {repo:$('repo').value.trim(), task}); $('w').value=''; autogrow($('w'));
 }
-function forward(){ post('/forward', {}); }
+function forward(btn){ if(btn){btn.disabled=true; btn.textContent='forwarded ✓';} post('/forward', {}); }
+
+// keyboard: Enter fires, Shift+Enter = newline (both lanes)
+$('q').addEventListener('keydown', e=>{ if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();consult();} });
+$('w').addEventListener('keydown', e=>{ if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();wsend();} });
 </script>
 </body>
 </html>
