@@ -35,8 +35,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 #     venv — the cockpit reads the .env itself (env.py) and talks to the LLM
 #     over stdlib urllib, so it runs under a bare python3 anywhere. ------------
 HERE = os.path.dirname(os.path.abspath(__file__))
-SCRIPTS = os.environ.get("COCKPIT_SCRIPTS") or os.path.expanduser(
-    "~/.claude/skills/chatgpt-web/scripts")
+# scrape reader scripts: $COCKPIT_SCRIPTS -> vendored <repo>/scrape -> the
+# original chatgpt-web skill location (dev machines).
+_VENDORED_SCRAPE = os.path.join(os.path.dirname(HERE), "scrape")
+SCRIPTS = (os.environ.get("COCKPIT_SCRIPTS")
+           or (_VENDORED_SCRAPE if os.path.isdir(_VENDORED_SCRAPE) else None)
+           or os.path.expanduser("~/.claude/skills/chatgpt-web/scripts"))
 for p in (HERE, SCRIPTS):
     if p not in sys.path:
         sys.path.insert(0, p)

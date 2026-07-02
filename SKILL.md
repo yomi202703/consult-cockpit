@@ -40,10 +40,11 @@ value, expanduser'd); the tool is not tied to any particular repo.
    `.env`; the API key preferably in the keychain (`bash run.sh auth set worker`) —
    precedence: explicit env var > keychain > .env value.
 3. OPTIONAL — a reader, one of two (neither → worker-only, `/consult` returns 503):
+   - scrape reader (bundled `scrape/`, no API cost): `python3 scrape/ask.py up`
+     then sign into ChatGPT once in the dedicated Chrome (port 9333; Cloudflare
+     cleared by hand once). Works with a free ChatGPT account.
    - API reader: `READER_LLM_*` in `.env` — consult runs browser-free, takes
      precedence over the scrape lane.
-   - scrape reader: the `chatgpt-web` skill (dedicated Chrome on port 9333,
-     one-time ChatGPT sign-in, Cloudflare cleared by hand once).
 
 ## Portability
 

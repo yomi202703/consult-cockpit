@@ -15,7 +15,10 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PY="${COCKPIT_PYTHON:-python3}"
 PORT="${COCKPIT_PORT:-8079}"
-export COCKPIT_SCRIPTS="${COCKPIT_SCRIPTS:-$HOME/.claude/skills/chatgpt-web/scripts}"
+# scrape reader scripts: vendored scrape/ ships with the repo; override with COCKPIT_SCRIPTS
+if [ -z "${COCKPIT_SCRIPTS:-}" ] && [ -d "$HERE/scrape" ]; then
+  export COCKPIT_SCRIPTS="$HERE/scrape"
+fi
 
 open_url() { command -v open >/dev/null && open "$1" || { command -v xdg-open >/dev/null && xdg-open "$1" || echo "  open: $1"; }; }
 

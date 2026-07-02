@@ -37,11 +37,12 @@ context survives. Rationale: `_dev/decisions.md` (2026-07-01).
 - All runtime code lives in `src/` (server / llm_client / env / secrets_store /
   repo_fetch + static); the repo root holds only entry/meta (`run.sh`, README,
   SKILL, CLAUDE). Put new modules in `src/`, not the root.
-- `nav`/`ask`/`cdp` are IMPORTED as a library from the chatgpt-web skill
-  (`COCKPIT_SCRIPTS`), not vendored here — EXCEPT `src/repo_fetch.py`, a deliberate
-  ownership fork of nav's pure repo-reading block (so worker-only mode needs no
-  chatgpt-web). CDP fixes go upstream in chatgpt-web; repo-fetch fixes go in
-  repo_fetch.py.
+- `scrape/` (nav/ask/cdp) is VENDORED for distribution (public users have no
+  chatgpt-web skill). On dev machines the upstream skill still exists: fix CDP
+  bugs upstream in chatgpt-web first, then re-copy into scrape/ — do not let the
+  two copies drift silently. Resolution order: $COCKPIT_SCRIPTS → <repo>/scrape →
+  ~/.claude/skills/chatgpt-web/scripts. `src/repo_fetch.py` remains the separate
+  ownership fork of nav's pure repo-reading block.
 - Adding a provider dialect = one 4-field entry in llm_client.ADAPTERS
   (path/headers/payload/parse_line), not a class hierarchy.
 - Routes are /worker, /worker-explore (the /gemma* aliases were removed for the

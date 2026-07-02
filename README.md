@@ -14,8 +14,25 @@ ChatGPT)に「repo を読ませて」cross-file の問題を外注する ── 
 - worker エンドポイント(OpenAI 互換)。`.env` に `WORKER_LLM_BASE_URL/_MODEL`、
   API キーは `bash run.sh auth set worker` で macOS キーチェーンへ(推奨。.env でも可)。
 - reader は2択(どちらも無ければ worker-only モード):
+  - scrape reader(同梱・追加課金ゼロ): 下の「scrape reader のセットアップ」参照
   - API reader: `.env` に `READER_LLM_*` — consult がブラウザ無しで動く(scrape より優先)
-  - scrape reader: 専用 Chrome + ChatGPT サインイン済み(`chatgpt-web` スキル、port 9333)
+
+## scrape reader のセットアップ(同梱 `scrape/`)
+
+web ChatGPT(無料アカウントでも可)を reader として使う。API 課金なし。
+
+```
+python3 scrape/ask.py up      # 専用 Chrome(デバッグポート9333・専用プロファイル)を起動
+# → 開いた Chrome で chatgpt.com に一度だけ手でログイン(Cloudflare が出たら手で解く)
+bash run.sh doctor            # Chrome:9333 と サインインを確認
+```
+
+ログインはプロファイル(`~/.gemini-chrome`)に永続するので初回のみ。Chrome は勝手に
+起動しない設計(閉じたら閉じたまま)。再開は `scrape/ask.py up`。
+
+性質を理解して使うこと: これはあなた自身がログインした ChatGPT セッションをあなたの
+マシン上で自動化するもの。OpenAI の利用規約上グレーであり、Cloudflare の人間チェックや
+UI 変更で壊れることがある(壊れたら Chrome 内で手動対応 → リトライ)。嫌なら API reader を。
 
 ```
 bash ~/.claude/lib/consult-cockpit/run.sh
@@ -46,9 +63,8 @@ repo の本文は「中央レーン」と「左(reader タブ)」にしか出さ
 - `src/repo_fetch.py` — 読み取り専用 repo fetch 層(nav の純粋部分の ownership fork)
 - `src/env.py` — .env リーダ(+ from_live_env でキー優先順位を実装)
 - `src/static/index.html` — 3レーン UI(EventSource + fetch POST、依存なし)
+- `scrape/` — scrape reader の実体(nav/ask/cdp、純 stdlib の CDP クライアント同梱)
 - `run.sh` — launcher / doctor / auth
-
-reader 用に import(書き換えず): `nav.{connect,get_state,find_fetch,send_message,wait_complete,NEWCHAT_JS}`。
 
 ## ルート
 

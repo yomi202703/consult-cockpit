@@ -2,6 +2,20 @@
 
 過去エントリは書き換えない。
 
+## 2026-07-03 scrape reader を repo に vendor（主役復帰）
+
+- 背景: オーナー確定「reader に API 課金はしない(するなら Claude Code に課金する)」。
+  第三者ツールに「ChatGPT アカウントでログイン」の正規手段は存在しない(first-party
+  OAuth は OpenAI 自身の拡張のみ)ため、無課金の強い reader = scrape が唯一解。
+  公開版で optional 降格した scrape が、実利用者にとっては主経路と判明した。
+- 対応: nav/ask/cdp(純 stdlib・自己完結・全て自作)を `scrape/` に vendor。解決順
+  $COCKPIT_SCRIPTS → <repo>/scrape → ~/.claude/skills/chatgpt-web/scripts。
+  README に手順昇格＋性質の明記(自分のセッションの自動化・ToS グレー・Cloudflare で
+  壊れうる・自己責任・無料アカウント可)。
+- 「vendor するな」規約の更新: 公開配布が理由。二重管理のリスクは「上流(chatgpt-web)で
+  直してから scrape/ に再コピー」の運用ルールで受ける(CLAUDE.md に明記)。
+- これで clone したインターンは Gemma API キー＋ChatGPT 手動ログインだけでフル機能。
+
 ## 2026-07-03 公開実行：github.com/yomi202703/consult-cockpit (public, MIT)
 
 - `gh repo create --public --source . --push` で公開。公開後検証: リモートツリー全数に
