@@ -33,6 +33,22 @@
   **一時 context** にだけ入り、**永続**の Gemma 履歴には最終回答しか残さない。だから履歴は痩せたまま。
 - 中央レーンは who タグ(chatgpt=青 / gemma=緑)で色分け。「誰がどのファイルを読んでいるか」が主役。
 
+## 2026-07-02 方針：チーム版/公開版の認証を any-API＋OSキーチェーンへ
+
+- 背景: 想定ユーザーが「自前 Gemma を立てる個人」→「任意 API を使う社内チーム＋公開配布」に変化。
+  裏取りに VSCode 拡張3種の実物を解剖（github/microsoft/anthropic.claude-code、この日）。
+- 判明: 拡張のクリーンなログイン＝システムブラウザ委譲＋`vscode://`/`127.0.0.1` ループバック＋
+  OS キーチェーン保存。差は「上流が OAuth を出すか」だけ。Anthropic は
+  `claude.com/cai/oauth/authorize`→`create_api_key`を公開、ChatGPT web は第三者 OAuth 無し
+  （＝現行 CDP スクレイプは上流仕様差の必然、実装の下手さではない）。
+- 決定した方向: (1) 既定を「API キー＋OS キーチェーン(拡張なら SecretStorage)」に、
+  (2) OAuth ループパックは提供元のみ上乗せ（Claude Code を踏襲）、
+  (3) ChatGPT web スクレイプは optional・非既定に降格。
+- 公開(public GitHub)化の鍵＝スクレイプ・レーンを既定から外すこと。standalone 化と
+  OpenAI web 自動化の ToS グレー排除が同時に達成。位置づけは「文脈オフロード観測ツール」。
+- 公開前ゲート: 社内資産スクラブ（improver/.env フォールバック・内部エンドポイント）・
+  雇用者サインオフ・ライセンス・最小テスト。詳細設計→`_dev/design_auth.md`。
+
 ## 2026-07-02 repo-shape：ランタイムを src/ に集約
 
 - `server.py` / `gemma_chat.py` / `env.py` / `static/` を `src/` へ git-mv(履歴保持)。

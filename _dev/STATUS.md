@@ -5,6 +5,10 @@
 構成: ランタイムは `src/`(server / gemma_chat / env + static)、governance は `_dev/`(オーナー規約)。
 ルートは入口/メタのみ。詳細 `_dev/decisions.md` 2026-07-02。
 
+方向転換(2026-07-02): 想定ユーザーが社内チーム＋公開配布へ。認証を any-API＋OSキーチェーンに寄せ、
+ChatGPT web スクレイプは optional 降格。VSCode 拡張3種の解剖が裏付け。設計=`_dev/design_auth.md`、
+次の実装キュー=`_dev/TODO.md`。
+
 動くもの（検証済み）:
 - 3レーン(左 ChatGPT ミラー / 中央 fetch トラフィック / 右 Gemma)。白ベース UI。
 - consult ▶（ChatGPT が repo を読む、~40s）／explore repo ▶（Gemma が読む、~4–5s）／
