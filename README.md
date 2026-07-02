@@ -13,8 +13,9 @@ ChatGPT)に「repo を読ませて」cross-file の問題を外注する ── 
 前提:
 - worker エンドポイント(OpenAI 互換)。`.env` に `WORKER_LLM_BASE_URL/_MODEL`、
   API キーは `bash run.sh auth set worker` で macOS キーチェーンへ(推奨。.env でも可)。
-- (任意) reader = 専用 Chrome + ChatGPT サインイン済み(`chatgpt-web` スキル、port 9333)。
-  無ければ worker-only モードで起動する。
+- reader は2択(どちらも無ければ worker-only モード):
+  - API reader: `.env` に `READER_LLM_*` — consult がブラウザ無しで動く(scrape より優先)
+  - scrape reader: 専用 Chrome + ChatGPT サインイン済み(`chatgpt-web` スキル、port 9333)
 
 ```
 bash ~/.claude/lib/consult-cockpit/run.sh

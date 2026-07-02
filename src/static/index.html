@@ -158,7 +158,9 @@ fetch('/state').then(r=>r.json()).then(s=>{
   if(s.default_repo) $('repo').value = s.default_repo;
   const w = $('worker').closest('.lane').querySelector('h2');
   if(s.worker_model) w.childNodes[0].textContent = 'worker — '+s.worker_model+' ';
-  $('rlabel').textContent = s.reader_mode==='disabled' ? 'disabled' : 'ChatGPT (web) 本物タブのミラー';
+  $('rlabel').textContent = s.reader_mode==='disabled' ? 'disabled'
+    : s.reader_mode==='api' ? (s.reader_model||'API')+' (API)'
+    : 'ChatGPT (web) 本物タブのミラー';
   if(s.worker_model) document.title = `consult cockpit — ${s.worker_model} × reader`;
 }).catch(()=>{});
 
@@ -168,7 +170,7 @@ ev.onmessage = e => {
   let m; try{ m = JSON.parse(e.data); }catch(_){ return; }
   switch(m.event){
     case 'status': {
-      const s = $('status'); const ok = m.reader==='connected';
+      const s = $('status'); const ok = m.reader==='connected'||m.reader==='api';
       s.className = ok?'ok':'bad';
       s.innerHTML = `<span class="dot"></span>reader: ${esc(m.reader)}`+(m.detail?` — ${esc(m.detail).slice(0,60)}`:'');
       break; }

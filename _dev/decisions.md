@@ -2,6 +2,20 @@
 
 過去エントリは書き換えない。
 
+## 2026-07-03 API reader 配線：consult がブラウザ無しで動く
+
+- `READER_LLM_*` を実配線。consult の dispatch: API reader 設定あり→ `_run_api_consult`
+  (worker-explore と同型の fetch ループを lane="reader" で回す)、無ければ従来 scrape、
+  どちらも無ければ 503。API 設定時は scrape controller を起動しない(status/mirror の
+  所有者を1本化 — 「一度に reader は1つ」)。
+- ミラー流用: API reader の transient 会話を scrape と同じ mirror イベント形に写像して
+  左ペインに表示。UI は reader_mode=api で「<model> (API)」ラベル＋緑ドット。
+- 不変条件は同一: repo 本文は reader の transient と中央レーンのみ。実測で worker 履歴 0 を確認。
+- 検証(実走): READER を Gemma エンドポイントに向け、consult がブラウザ無しで repo を
+  fetch 探索 → 不変条件を問う質問に repo を読んで正答 → forward が回答81Bだけを worker へ。
+  doctor は設定時「consult uses this, not the scrape lane」を表示。
+- これで公開版の形が完成: 両レーン API・キーチェーン・scrape は完全 optional。
+
 ## 2026-07-03 P1実装：any-API worker＋SecretStore＋scrape optional＋worker/reader改名
 
 - 実装コミット: 64a3615(repo_fetch fork＋nav ガード) / 5754226(llm_client＋secrets_store＋env) /

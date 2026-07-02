@@ -257,8 +257,91 @@ CONTROLLER = TabController()
 
 
 # =============================================================================
+# API reader consult (no CDP) — when READER_LLM_* is configured, the reader is
+# a plain API endpoint: same fetch protocol as the scrape consult, but over
+# stream_chat(lane="reader"). Takes precedence over the scrape reader.
+# =============================================================================
+_reader_busy = False
+
+
+def _api_reader_cfg():
+    """LaneConfig for the API reader, or None (unconfigured/misconfigured)."""
+    try:
+        return resolve_lane("reader")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _mirror_from(transient) -> None:
+    """Render the API reader's transient conversation into the left pane,
+    reusing the scrape-mirror event shape."""
+    turns = [{"role": ("assistant" if m["role"] == "assistant" else "user"),
+              "text": m["content"]} for m in transient]
+    broadcast("mirror", {"turns": turns})
+
+
+def _run_api_consult(repo: str, question: str) -> None:
+    """Consult over the API reader. Same context invariant as the scrape path:
+    repo bodies go only into the reader's transient context and the middle lane
+    (names + byte counts) — never into the worker history."""
+    global _last_reader_answer, _reader_busy
+    root = os.path.abspath(os.path.expanduser(repo))
+    with _state_lock:
+        if _reader_busy:
+            broadcast("consult", {"status": "busy"})
+            return
+        _reader_busy = True
+    try:
+        if not os.path.isdir(root):
+            broadcast("consult", {"status": "error", "detail": f"not a dir: {root}"})
+            return
+        broadcast("consult", {"status": "start", "repo": os.path.basename(root)})
+        transient = [{"role": "user", "content": repo_fetch.build_brief(root, question)}]
+        broadcast("consult", {"status": "briefed"})
+        answer = ""
+        for i in range(MAX_CONSULT_ROUNDS):
+            full = "".join(stream_chat(transient, lane="reader", max_tokens=2048))
+            transient.append({"role": "assistant", "content": full})
+            _mirror_from(transient)
+            cmds = parse_fetch_text(full)
+            if not cmds:
+                answer = full.strip()
+                break
+            names = " | ".join(c.strip() for c in cmds if c.strip())[:300]
+            broadcast("fetch", {"names": names, "round": i + 1, "who": "reader"})
+            served = repo_fetch.run_commands(root, cmds)  # repo bodies -> reader only
+            broadcast("served", {"bytes": len(served), "round": i + 1, "who": "reader"})
+            transient.append({"role": "user", "content": served})
+        else:
+            transient.append({"role": "user", "content":
+                              "Stop fetching. Give your best final answer now "
+                              "from what you've read."})
+            answer = "".join(stream_chat(transient, lane="reader",
+                                         max_tokens=2048)).strip()
+            transient.append({"role": "assistant", "content": answer})
+            _mirror_from(transient)
+        with _state_lock:
+            _last_reader_answer = answer
+        broadcast("answer", {"text": answer})
+        broadcast("consult", {"status": "done"})
+    except Exception as e:  # noqa: BLE001
+        broadcast("consult", {"status": "error", "detail": repr(e)})
+    finally:
+        with _state_lock:
+            _reader_busy = False
+
+
+# =============================================================================
 # Worker chat (no CDP) — runs on its own thread, streams over SSE
 # =============================================================================
+# Startup snapshot: an API reader (READER_LLM_*) takes precedence over the
+# scrape reader — one reader at a time keeps status/mirror ownership simple.
+_API_READER0 = _api_reader_cfg()
+if _API_READER0:
+    _last_status = {"event": "status", "reader": "api",
+                    "detail": f"{_API_READER0.provider}/{_API_READER0.model}"}
+
+
 def _run_worker(user_msg: str) -> None:
     global _worker_busy
     with _state_lock:
@@ -404,13 +487,19 @@ class Handler(BaseHTTPRequestHandler):
                 wcfg = resolve_lane("worker")
             except Exception:  # noqa: BLE001  (bad config must not kill /state)
                 pass
+            if _API_READER0 is not None:
+                rmode, rmodel = "api", _API_READER0.model
+            elif nav is not None:
+                rmode, rmodel = "chatgpt-web", ""
+            else:
+                rmode, rmodel = "disabled", ""
             with _state_lock:
                 self._json(200, {"worker": list(_worker_history),
                                  "has_answer": bool(_last_reader_answer),
                                  "default_repo": DEFAULT_REPO,
                                  "worker_model": wcfg.model if wcfg else "",
-                                 "reader_mode": ("disabled" if nav is None
-                                                 else "chatgpt-web")})
+                                 "reader_mode": rmode,
+                                 "reader_model": rmodel})
         elif self.path == "/events":
             self._sse()
         else:
@@ -450,13 +539,18 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         body = self._read_json()
         if self.path == "/consult":
-            if nav is None:
-                return self._json(503, {"error": "reader lane disabled",
-                                        "detail": _NAV_ERR})
             repo = body.get("repo") or DEFAULT_REPO
             question = (body.get("question") or "").strip()
             if not question:
                 return self._json(400, {"error": "question required"})
+            if _API_READER0 is not None:            # API reader (no browser)
+                threading.Thread(target=_run_api_consult, args=(repo, question),
+                                 daemon=True).start()
+                return self._json(202, {"queued": True, "repo": repo,
+                                        "reader": "api"})
+            if nav is None:
+                return self._json(503, {"error": "reader lane disabled",
+                                        "detail": _NAV_ERR})
             _cmd_q.put({"type": "consult", "repo": repo, "question": question})
             self._json(202, {"queued": True, "repo": repo})
         elif self.path in ("/worker", "/gemma"):        # /gemma = legacy alias, remove at public release
@@ -521,10 +615,10 @@ def doctor() -> int:
         print(f"  [!!  ] reader API lane — misconfigured: {repr(e)[:60]}")
     if rcfg:
         print(f"  [ok ] reader API lane — {rcfg.provider}/{rcfg.model} "
-              f"(key: {rcfg.key_source}) [not wired yet]")
+              f"(key: {rcfg.key_source}) — consult uses this, not the scrape lane")
     else:
-        print("  [off ] reader API lane — not configured (dormant; scrape lane "
-              "is the reader for now)")
+        print("  [off ] reader API lane — not configured (scrape lane is the "
+              "reader when chatgpt-web is present)")
 
     try:
         with _u.urlopen("http://127.0.0.1:9333/json/version", timeout=3):
@@ -557,7 +651,10 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] in ("doctor", "--doctor"):
         sys.exit(doctor())
     print(f"[cockpit] repo → {DEFAULT_REPO}", flush=True)
-    if nav is not None:
+    if _API_READER0 is not None:
+        print(f"[cockpit] reader = API ({_API_READER0.provider}/"
+              f"{_API_READER0.model}) — scrape controller not started", flush=True)
+    elif nav is not None:
         CONTROLLER.start()
     else:
         print("[cockpit] reader lane disabled — worker-only mode", flush=True)

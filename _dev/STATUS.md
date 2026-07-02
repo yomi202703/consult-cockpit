@@ -14,6 +14,8 @@ P1 実装済み(2026-07-03、decisions 参照):
   repo_fetch.py(nav 純粋部の fork)が worker レーンを nav から独立させた。
 - 改名: worker/reader(wire・UI・ルート)。/gemma* は互換 alias(公開時削除)。
   UI ラベルは /state から動的(worker_model, reader_mode)。
+- API reader 配線済み: READER_LLM_* 設定で consult がブラウザ無しの API ループに切替
+  (scrape より優先)。両レーン API で scrape 完全不要 = 公開版の形が完成。
 
 動くもの（検証済み）:
 - 3レーン(左 reader ミラー / 中央 fetch トラフィック / 右 worker)。

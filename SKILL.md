@@ -39,9 +39,11 @@ value, expanduser'd); the tool is not tied to any particular repo.
 2. A worker endpoint (any OpenAI-compatible API): `WORKER_LLM_BASE_URL/_MODEL` in
    `.env`; the API key preferably in the keychain (`bash run.sh auth set worker`) —
    precedence: explicit env var > keychain > .env value.
-3. OPTIONAL — the scrape reader: the `chatgpt-web` skill (dedicated Chrome on port
-   9333, one-time ChatGPT sign-in, Cloudflare cleared by hand once). Without it the
-   cockpit runs worker-only and `/consult` returns 503.
+3. OPTIONAL — a reader, one of two (neither → worker-only, `/consult` returns 503):
+   - API reader: `READER_LLM_*` in `.env` — consult runs browser-free, takes
+     precedence over the scrape lane.
+   - scrape reader: the `chatgpt-web` skill (dedicated Chrome on port 9333,
+     one-time ChatGPT sign-in, Cloudflare cleared by hand once).
 
 ## Portability
 
