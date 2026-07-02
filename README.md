@@ -1,18 +1,20 @@
 # consult-cockpit
 
-Gemma × ChatGPT の3レーン観測コックピット。ローカル Gemma(小 context)が
-repo を自分の context に載せずに、ChatGPT に「repo を読ませて」cross-file の問題を
-外注する ── その往復を1画面で可視化する。
+worker × reader の3レーン観測コックピット。小 context の worker(今はローカル Gemma、
+任意の OpenAI 互換 API 可)が repo を自分の context に載せずに、reader(今は web
+ChatGPT)に「repo を読ませて」cross-file の問題を外注する ── その往復を1画面で可視化する。
 
-- 左 = ChatGPT ミラー(本物の signed-in タブを CDP で読む)
-- 中央 = fetch トラフィック(今 ChatGPT がどのファイルを読んでいるか)= 主役
-- 右 = Gemma free-form チャット(streaming)
+- 左 = reader ミラー(本物の signed-in ChatGPT タブを CDP で読む。無ければ disabled)
+- 中央 = fetch トラフィック(今どのファイルが読まれているか)= 主役
+- 右 = worker free-form チャット(streaming)
 
 ## 走らせる
 
 前提:
-- 専用 Chrome + ChatGPT サインイン済み(`chatgpt-web` スキルの手順、debug port 9333)。
-- Gemma エンドポイント到達可(`~/.claude/lib/improver/.env` の `WORKER_LLM_*`)。
+- worker エンドポイント(OpenAI 互換)。`.env` に `WORKER_LLM_BASE_URL/_MODEL`、
+  API キーは `bash run.sh auth set worker` で macOS キーチェーンへ(推奨。.env でも可)。
+- (任意) reader = 専用 Chrome + ChatGPT サインイン済み(`chatgpt-web` スキル、port 9333)。
+  無ければ worker-only モードで起動する。
 
 ```
 bash ~/.claude/lib/consult-cockpit/run.sh
@@ -20,35 +22,38 @@ bash ~/.claude/lib/consult-cockpit/run.sh
 ```
 
 使い方:
-1. 左下に repo パスと質問を入れて `consult ▶`。中央に fetch が流れ、左に ChatGPT が
+1. 左下に repo パスと質問を入れて `consult ▶`。中央に fetch が流れ、左に reader が
    repo を読んで答えるのが映る。
-2. 回答が出たら右下の `forward ⇥` で ChatGPT の回答を Gemma に手渡す。
-3. 右の Gemma に「これを実装 plan にまとめて」等と依頼。
+2. 回答が出たら右下の `forward ⇥` で reader の回答を worker に手渡す。
+3. 右の worker に「これを実装 plan にまとめて」等と依頼。
 
 ## 設計の肝(死守する不変条件)
 
-repo の本文は「中央レーン」と「左(ChatGPT タブ)」にしか出さない。Gemma の会話履歴には
-絶対に入れない。`/forward` が渡すのは ChatGPT の最終回答テキストのみ(上限8KB)。
-これで「repo は一度も Gemma の context に入らない」= 文脈オフロードを実装で保証する。
+repo の本文は「中央レーン」と「左(reader タブ)」にしか出さない。worker の会話履歴には
+絶対に入れない。`/forward` が渡すのは reader の最終回答テキストのみ(上限8KB)。
+これで「repo は一度も worker の context に入らない」= 文脈オフロードを実装で保証する。
 
 ## 構成
 
-1プロセス。`improver/.venv`(py3.12 + httpx)で起動し、依存ゼロの
-`chatgpt-web/scripts`(nav/ask/cdp)を `sys.path` に足して両方 import。
-stdlib `ThreadingHTTPServer` + SSE、フレームワーク無し。
+1プロセス・bare python3(3.9+)・stdlib のみ。`ThreadingHTTPServer` + SSE、
+フレームワーク無し。chatgpt-web/scripts(nav/ask/cdp)は在れば sys.path で import
+(scrape reader 用・任意)。
 
 - `src/server.py` — SSE ハブ / タブ制御スレッド(CDP は1本に直列化)/ consult ループ / ルート
-- `src/gemma_chat.py` — free-form streaming クライアント(env_loader → OpenAI 互換 /chat/completions, stream=True)
+- `src/llm_client.py` — レーン設定(resolve_lane)＋provider アダプタ＋streaming クライアント(OpenAI 互換)
+- `src/secrets_store.py` — API キーの macOS キーチェーン保管(`run.sh auth`)
+- `src/repo_fetch.py` — 読み取り専用 repo fetch 層(nav の純粋部分の ownership fork)
+- `src/env.py` — .env リーダ(+ from_live_env でキー優先順位を実装)
 - `src/static/index.html` — 3レーン UI(EventSource + fetch POST、依存なし)
-- `run.sh` — PYTHONPATH を張って improver venv で src/server.py を exec
+- `run.sh` — launcher / doctor / auth
 
-再利用(書き換えず import): `nav.{connect,get_state,find_fetch,run_commands,send_message,wait_complete,build_brief,NEWCHAT_JS}`、
-`improver.env_loader.load_env`。
+reader 用に import(書き換えず): `nav.{connect,get_state,find_fetch,send_message,wait_complete,NEWCHAT_JS}`。
 
 ## ルート
 
-- `GET /` UI / `GET /events` SSE / `GET /state` 現在の Gemma 履歴
-- `POST /consult {repo,question}` / `POST /gemma {message}` / `POST /forward`
+- `GET /` UI / `GET /events` SSE / `GET /state` 現在の worker 履歴・レーン構成
+- `POST /consult {repo,question}` / `POST /worker {message}` / `POST /worker-explore {repo,task}` / `POST /forward`
+  (旧 `/gemma`, `/gemma-explore` は互換エイリアス・公開時に削除)
 
 ## 検証済み(2026-07-01)
 
