@@ -1,7 +1,6 @@
 # TODO — consult-cockpit
 
 ## Active
-- P1 公開の実行: GitHub リポジトリ作成＋push（コード側の準備は完了。個人 PJ と確認済み — decisions 2026-07-03 訂正）
 - P2 OAuth ループバックログイン（提供元のみ）: openExternal+PKCE → 127.0.0.1/callback → キー発行 → キーチェーン。device code フォールバック
 
 ## Deferred
