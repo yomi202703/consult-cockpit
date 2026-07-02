@@ -39,8 +39,19 @@ for p in (HERE, SCRIPTS):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-import nav  # noqa: E402  (connect/get_state/find_fetch/run_commands/send_message/...)
+# nav (chatgpt-web's CDP layer) is OPTIONAL: without it the reader/scrape lane
+# is disabled but the worker lane and the UI run fine. Catch ImportError only —
+# a real bug inside nav should still crash loudly.
+try:
+    import nav  # noqa: E402  (connect/get_state/find_fetch/send_message/wait_complete)
+    _NAV_ERR = ""
+except ImportError as e:
+    nav = None
+    _NAV_ERR = repr(e)
+    print(f"[cockpit] chatgpt lane disabled: {_NAV_ERR}", file=sys.stderr, flush=True)
+
 import env as cockpit_env  # noqa: E402
+import repo_fetch  # noqa: E402  (cockpit-owned fork of nav's pure repo layer)
 from gemma_chat import stream_chat  # noqa: E402
 
 PORT = int(os.environ.get("COCKPIT_PORT", "8079"))
@@ -65,9 +76,9 @@ def parse_fetch_text(text: str):
             continue
         if lang.lower() == "fetch":
             return lines
-        if all(nav.CMD_RE.match(l) for l in lines):
+        if all(repo_fetch.CMD_RE.match(l) for l in lines):
             return lines
-    bare = [l for l in text.splitlines() if nav.CMD_RE.match(l)]
+    bare = [l for l in text.splitlines() if repo_fetch.CMD_RE.match(l)]
     return bare or None
 
 # all turns (user + assistant) of the current ChatGPT conversation, for the mirror
@@ -82,7 +93,9 @@ MIRROR_JS = (
 # =============================================================================
 _subs: list[queue.Queue] = []
 _subs_lock = threading.Lock()
-_last_status: dict = {"event": "status", "chatgpt": "connecting"}
+_last_status: dict = ({"event": "status", "chatgpt": "disabled", "detail": _NAV_ERR}
+                      if nav is None else
+                      {"event": "status", "chatgpt": "connecting"})
 
 
 def broadcast(event: str, data: dict) -> None:
@@ -144,6 +157,8 @@ class TabController(threading.Thread):
         self._last_connect_try = 0.0
 
     def _ensure_connected(self) -> bool:
+        if nav is None:  # scrape lane disabled; thread shouldn't even be running
+            return False
         if self.ws is not None:
             return True
         if time.time() - self._last_connect_try < 5:
@@ -188,7 +203,7 @@ class TabController(threading.Thread):
             self.ws.evaluate(nav.NEWCHAT_JS)
             time.sleep(1.5)
             base = nav.get_state(self.ws).get("count", 0)
-            nav.send_message(self.ws, nav.build_brief(root, question))
+            nav.send_message(self.ws, repo_fetch.build_brief(root, question))
             broadcast("consult", {"status": "briefed"})
             cur = base
             for i in range(MAX_CONSULT_ROUNDS):
@@ -205,7 +220,7 @@ class TabController(threading.Thread):
                     return
                 names = " | ".join(l.strip() for l in cmds if l.strip())[:300]
                 broadcast("fetch", {"names": names, "round": i + 1, "who": "chatgpt"})
-                reply = nav.run_commands(root, cmds)          # repo bodies -> ChatGPT only
+                reply = repo_fetch.run_commands(root, cmds)   # repo bodies -> ChatGPT only
                 nav.send_message(self.ws, reply)
                 broadcast("served", {"bytes": len(reply), "round": i + 1, "who": "chatgpt"})
                 time.sleep(2)
@@ -290,7 +305,7 @@ def _run_gemma_explore(repo: str, task: str) -> None:
             _gemma_busy = False
         return
     broadcast("explore", {"status": "start", "repo": os.path.basename(root)})
-    transient = [{"role": "user", "content": nav.build_brief(root, task)}]
+    transient = [{"role": "user", "content": repo_fetch.build_brief(root, task)}]
     answer = ""
     try:
         for i in range(GEMMA_EXPLORE_ROUNDS):
@@ -302,7 +317,7 @@ def _run_gemma_explore(repo: str, task: str) -> None:
                 break
             names = " | ".join(c.strip() for c in cmds if c.strip())[:300]
             broadcast("fetch", {"names": names, "round": i + 1, "who": "gemma"})
-            served = nav.run_commands(root, cmds)      # repo bodies -> transient only
+            served = repo_fetch.run_commands(root, cmds)  # repo bodies -> transient only
             broadcast("served", {"bytes": len(served), "round": i + 1, "who": "gemma"})
             transient.append({"role": "assistant", "content": full})
             transient.append({"role": "user", "content": served})
@@ -425,6 +440,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         body = self._read_json()
         if self.path == "/consult":
+            if nav is None:
+                return self._json(503, {"error": "chatgpt lane disabled",
+                                        "detail": _NAV_ERR})
             repo = body.get("repo") or DEFAULT_REPO
             question = (body.get("question") or "").strip()
             if not question:
@@ -466,9 +484,14 @@ def doctor() -> int:
     print("consult-cockpit doctor")
     print(f"  python {sys.version.split()[0]}")
 
-    line(os.path.isdir(SCRIPTS), "chatgpt-web scripts", SCRIPTS)
-    line("connect" in dir(nav) and "run_commands" in dir(nav),
-         "nav/ask/cdp import", "importable")
+    if nav is None:
+        # scrape lane disabled: informational, not a failure — worker-only mode
+        print(f"  [off ] chatgpt-web scripts — not importable ({SCRIPTS})")
+        print("  [off ] chatgpt lane — disabled (worker-only mode)")
+    else:
+        line(os.path.isdir(SCRIPTS), "chatgpt-web scripts", SCRIPTS)
+        line("connect" in dir(nav) and "send_message" in dir(nav),
+             "nav/ask/cdp import", "importable")
 
     src = cockpit_env.env_source()
     line(bool(src), ".env found", src or "none of: $COCKPIT_ENV, ./.env, improver/.env")
@@ -481,8 +504,12 @@ def doctor() -> int:
             chrome = True
     except Exception:  # noqa: BLE001
         chrome = False
-    line(chrome, "dedicated Chrome :9333", "reachable" if chrome else
-         "down — start via chatgpt-web (ask.py ping) and sign in")
+    if nav is None:
+        print(f"  [off ] dedicated Chrome :9333 — "
+              f"{'reachable but unused' if chrome else 'down'} (lane disabled)")
+    else:
+        line(chrome, "dedicated Chrome :9333", "reachable" if chrome else
+             "down — start via chatgpt-web (ask.py up) and sign in")
 
     if not miss:
         try:
@@ -502,7 +529,10 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] in ("doctor", "--doctor"):
         sys.exit(doctor())
     print(f"[cockpit] repo → {DEFAULT_REPO}", flush=True)
-    CONTROLLER.start()
+    if nav is not None:
+        CONTROLLER.start()
+    else:
+        print("[cockpit] chatgpt lane disabled — worker-only mode", flush=True)
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     print(f"[cockpit] http://127.0.0.1:{PORT}  (Ctrl-C to stop)", flush=True)
     try:
