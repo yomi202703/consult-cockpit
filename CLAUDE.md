@@ -34,6 +34,12 @@ Touch the explore loop or `/forward` → preserve this. It is why the worker's s
 context survives. Rationale: `_dev/decisions.md` (2026-07-01).
 
 ## Conventions a newcomer gets wrong
+- The human talks ONLY to the worker; consult is the worker's tool, not a human
+  button. WORKER_SYSTEM (server.py) instructs it to emit a ```consult block on
+  the user's EXPLICIT request only; the server intercepts it (parse_consult_text
+  → consult_once), feeds back the answer capped like /forward, and the worker
+  synthesizes. The system prompt is injected per-call, never stored in history.
+  Touching that loop → preserve the invariant above.
 - All runtime code lives in `src/` (server / llm_client / env / secrets_store /
   repo_fetch + static); the repo root holds only entry/meta (`run.sh`, README,
   SKILL, CLAUDE). Put new modules in `src/`, not the root.

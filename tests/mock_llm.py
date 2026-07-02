@@ -20,15 +20,29 @@ PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8199
 
 FETCH_REPLY = "I'll look at the repo first.\n```fetch\nREAD README.md\n```"
 FINAL_REPLY = "MOCK-ANSWER: read the file; everything checks out."
+CONSULT_REPLY = "```consult\nWhat is in the readme?\n```"
+SYNTH_REPLY = "MOCK-SYNTH: per the reader, the readme checks out."
 CHAT_REPLY = "MOCK-CHAT: hello from the mock."
 
 
 def pick_reply(messages):
-    text = "\n".join(m.get("content", "") for m in messages)
-    if "Here are the requested contents" in text:
-        return FINAL_REPLY
-    if "fenced code block tagged" in text:      # the fetch-protocol brief
-        return FETCH_REPLY
+    """Deterministic routing. Order matters:
+    1. reader's answer already came back      -> worker synthesizes
+    2. a repo brief is present (File tree:)   -> reader/explore path:
+       served contents yet? final answer : one fetch round
+    3. the user asked to consult the reader   -> worker emits the tool block
+    4. plain chat
+    System messages are excluded: the worker's system prompt itself mentions
+    the tool markers ('[Reader's answer]', consult blocks), so scanning it
+    would misroute every worker call."""
+    text = "\n".join(m.get("content", "") for m in messages
+                     if m.get("role") != "system")
+    if "[Reader's answer]" in text:
+        return SYNTH_REPLY
+    if "File tree:" in text:
+        return FINAL_REPLY if "Here are the requested contents" in text else FETCH_REPLY
+    if "please ask the reader" in text:
+        return CONSULT_REPLY
     return CHAT_REPLY
 
 

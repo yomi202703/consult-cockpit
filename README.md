@@ -39,11 +39,15 @@ bash ~/.claude/lib/consult-cockpit/run.sh
 # → http://127.0.0.1:8079
 ```
 
-使い方:
-1. 左下に repo パスと質問を入れて `consult ▶`。中央に fetch が流れ、左に reader が
-   repo を読んで答えるのが映る。
-2. 回答が出たら右下の `forward ⇥` で reader の回答を worker に手渡す。
-3. 右の worker に「これを実装 plan にまとめて」等と依頼。
+使い方（入力は worker の1箇所だけ）:
+1. ヘッダーの repo 欄に対象 repo を入れ、右の worker に普通に話す。
+2. 強いモデルに読ませたい時は worker に頼む — 「ChatGPTに聞いてみて」「readerに投げて」。
+   worker が consult を発動し、中央に fetch が流れ、左に reader の探索が映り、
+   回答を踏まえて worker が答える。
+3. worker 自身に repo を読ませるなら入力を書いて `explore repo ▶`（速い・小さい仕事向け）。
+
+左レーンは観測専用（人間は操作しない）。`POST /consult` は API として残っており、
+スクリプトから直接 reader に質問する時はそちらを使う。
 
 ## 設計の肝(死守する不変条件)
 

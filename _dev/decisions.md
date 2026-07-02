@@ -2,6 +2,26 @@
 
 過去エントリは書き換えない。
 
+## 2026-07-03 consult は worker の道具に（人間駆動の撤回・入力1本化）
+
+- オーナー観察: 「人間が ChatGPT に質問を打つことは無い。自然なのは Gemma に
+  『ChatGPTに聞いて』と頼むこと」。2026-07-01 の「consult の引き金は人間駆動」決定を、
+  実物を触った上での再判断として撤回。
+- 設計(オーナー ratify): (1) 発動は明示指示のみ — 小型モデルの自律判断ブレ
+  (過少/過剰発動)を排除。自律化は必要になったら後段。(2) 左ペインは純観測ミラー化、
+  入力は worker の1箇所(repo 欄はヘッダーへ)。/consult ルートは API として存続。
+- 機構: WORKER_SYSTEM(逐語はオーナー提示済み)を reader 在時のみ per-call 注入(履歴には
+  入れない)。worker が ```consult ブロックを発話 → parse_consult_text → consult_once
+  (API reader なら直接 / scrape なら _cmd_q に done Event 付きで投入し待機) → 回答を
+  [Reader's answer] として FORWARD_CAP で履歴に注入 → worker が統合回答。
+  不変条件は不変(repo 本文は reader の transient と中央レーンのみ)。
+- Deferred「Gemma 自律 consult」はこの明示委任形で消化。完全自律(タスク重さで自判)は
+  当面 won't do — 発動判断のブレ(gemma-prompt の前提)に対し利得が薄い。
+- 検証: e2e(mock)に tool-loop テスト追加(18本・1.4s)。実機で日本語依頼→Gemma が英語の
+  consult ブロック→本物 ChatGPT が repo 探索→Gemma が日本語統合(tests/test_e2e.py まで
+  引用)を完走。モックの教訓: システムプロンプトにマーカー文字列が含まれるため、mock の
+  ルーティングは system role を除外して走査する(マーカー衝突は本物のバグ類型)。
+
 ## 2026-07-03 UI磨き＋モックLLMで「テストむずい」を潰す
 
 - UI(操作性、html-deck/review-server の規律を適用): ボタンが作業状態を語る(consult…

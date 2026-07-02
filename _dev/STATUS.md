@@ -1,6 +1,6 @@
 # STATUS — consult-cockpit
 
-更新: 2026-07-03
+更新: 2026-07-03 (夜)
 
 構成: ランタイムは `src/`(server / llm_client / secrets_store / repo_fetch / env + static)、
 governance は `_dev/`(オーナー規約)。ルートは入口/メタのみ。

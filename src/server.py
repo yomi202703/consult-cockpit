@@ -68,6 +68,35 @@ WORKER_EXPLORE_ROUNDS = 4     # keep it snappy: the worker explores locally in f
 
 _FENCE_RE = re.compile(r"```([\w-]*)\s*\n(.*?)```", re.DOTALL)
 
+# The worker's one tool: consult the reader on the user's explicit request.
+# Injected as a system message only while a reader is available; never stored
+# in the persistent history.
+WORKER_SYSTEM = (
+    "You are the worker assistant of a two-model cockpit over a code "
+    "repository. You have one tool.\n"
+    "When the user explicitly asks you to consult the reader (for example, "
+    "asks you to ask ChatGPT, the reader, or a stronger model), reply with "
+    "exactly one fenced code block tagged consult containing one "
+    "self-contained question in English about the repository, and nothing "
+    "else:\n"
+    "```consult\n<question>\n```\n"
+    "The reader explores the repository itself; do not paste file contents "
+    "into the question. When a later user message starts with "
+    "[Reader's answer], use it to answer the user in the conversation's "
+    "language. In every other case, converse normally and do not emit a "
+    "consult block."
+)
+
+
+def parse_consult_text(text: str):
+    """Return the question from a ```consult fenced block, or None."""
+    for lang, body in _FENCE_RE.findall(text or ""):
+        if lang.lower() == "consult":
+            q = body.strip()
+            if q:
+                return q
+    return None
+
 
 def parse_fetch_text(text: str):
     """Extract fetch commands from a raw LLM reply (the worker has no DOM to read).
@@ -254,6 +283,10 @@ class TabController(threading.Thread):
                     self._run_consult(cmd["repo"], cmd["question"])
             except Exception:  # noqa: BLE001
                 traceback.print_exc()
+            finally:
+                done = cmd.get("done")
+                if done is not None:
+                    done.set()   # wake a worker thread waiting on this consult
 
 
 CONTROLLER = TabController()
@@ -327,11 +360,29 @@ def _run_api_consult(repo: str, question: str) -> None:
             _last_reader_answer = answer
         broadcast("answer", {"text": answer})
         broadcast("consult", {"status": "done"})
+        return answer
     except Exception as e:  # noqa: BLE001
         broadcast("consult", {"status": "error", "detail": repr(e)})
+        return None
     finally:
         with _state_lock:
             _reader_busy = False
+
+
+def consult_once(root: str, question: str, timeout: float = 600):
+    """Run one consult on whichever reader is active and return the answer
+    text (None on failure / no reader). Used by the worker's consult tool."""
+    if _API_READER0 is not None:
+        return _run_api_consult(root, question)
+    if nav is not None:
+        done = threading.Event()
+        _cmd_q.put({"type": "consult", "repo": root, "question": question,
+                    "done": done})
+        if done.wait(timeout):
+            with _state_lock:
+                return _last_reader_answer or None
+        return None
+    return None
 
 
 # =============================================================================
@@ -345,7 +396,11 @@ if _API_READER0:
                     "detail": f"{_API_READER0.provider}/{_API_READER0.model}"}
 
 
-def _run_worker(user_msg: str) -> None:
+def _run_worker(user_msg: str, repo: str = "") -> None:
+    """Worker chat turn. If the user explicitly asked to consult the reader,
+    the worker emits a ```consult block (see WORKER_SYSTEM); the server
+    intercepts it, runs the consult, feeds the answer back (capped, text only
+    — same invariant as /forward), and the worker replies to the user."""
     global _worker_busy
     with _state_lock:
         if _worker_busy:
@@ -355,12 +410,33 @@ def _run_worker(user_msg: str) -> None:
         _worker_history.append({"role": "user", "content": user_msg})
         history = list(_worker_history)
     broadcast("worker", {"status": "start", "role": "user", "content": user_msg})
-    acc = []
-    try:
-        for tok in stream_chat(history):
+    reader_avail = _API_READER0 is not None or nav is not None
+    system = [{"role": "system", "content": WORKER_SYSTEM}] if reader_avail else []
+
+    def _stream(msgs):
+        acc = []
+        for tok in stream_chat(msgs):
             acc.append(tok)
             broadcast("worker", {"status": "delta", "content": tok})
-        reply = "".join(acc)
+        return "".join(acc)
+
+    try:
+        reply = _stream(system + history)
+        question = parse_consult_text(reply) if reader_avail else None
+        if question:
+            with _state_lock:
+                _worker_history.append({"role": "assistant", "content": reply})
+            broadcast("worker", {"status": "consulting", "question": question})
+            root = os.path.abspath(os.path.expanduser(repo or DEFAULT_REPO))
+            answer = consult_once(root, question)
+            content = ("[Reader's answer]\n\n" + answer[:FORWARD_CAP]) if answer \
+                else "[Reader's answer]\n\n(consult failed — tell the user so)"
+            with _state_lock:
+                _worker_history.append({"role": "user", "content": content})
+                history = list(_worker_history)
+            broadcast("worker", {"status": "forwarded", "role": "user",
+                                 "content": content})
+            reply = _stream(system + history)
         with _state_lock:
             _worker_history.append({"role": "assistant", "content": reply})
         broadcast("worker", {"status": "done", "content": reply})
@@ -561,7 +637,9 @@ class Handler(BaseHTTPRequestHandler):
             msg = (body.get("message") or "").strip()
             if not msg:
                 return self._json(400, {"error": "message required"})
-            threading.Thread(target=_run_worker, args=(msg,), daemon=True).start()
+            repo = body.get("repo") or DEFAULT_REPO
+            threading.Thread(target=_run_worker, args=(msg, repo),
+                             daemon=True).start()
             self._json(202, {"queued": True})
         elif self.path == "/worker-explore":
             task = (body.get("task") or "").strip()

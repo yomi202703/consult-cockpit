@@ -150,7 +150,21 @@ class E2ETest(unittest.TestCase):
         joined = "\n".join(m["content"] for m in self.state()["worker"])
         self.assertNotIn("mock repo readme", joined)
 
-    def test_5_gone_alias_is_404(self):
+    def test_5_worker_consults_reader_on_explicit_request(self):
+        """The one-input UX: telling the worker to ask the reader triggers the
+        consult tool loop (worker -> ```consult -> reader run -> [Reader's
+        answer] -> worker synthesis), with the invariant intact."""
+        code, _ = post_json(self.url + "/worker",
+                            {"message": "please ask the reader about the readme",
+                             "repo": self.tmp.name})
+        self.assertEqual(code, 202)
+        self.assertTrue(wait_until(lambda: any(
+            "MOCK-SYNTH" in m["content"] for m in self.state()["worker"])))
+        joined = "\n".join(m["content"] for m in self.state()["worker"])
+        self.assertIn("[Reader's answer]", joined)     # answer text crossed
+        self.assertNotIn("mock repo readme", joined)   # repo bodies did not
+
+    def test_6_gone_alias_is_404(self):
         code, _ = post_json(self.url + "/gemma", {"message": "x"})
         self.assertEqual(code, 404)
 

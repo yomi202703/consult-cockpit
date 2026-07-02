@@ -86,21 +86,18 @@
 <body>
 <header>
   <b>consult cockpit</b>
-  <span class="sub">repo → reader が読む → worker へ手渡し</span>
+  <span class="sub">worker に話す — 「ChatGPTに聞いて」で reader が repo を読む</span>
+  <span class="lbl" style="color:var(--dim);font-size:11px">repo</span>
+  <input id="repo" value="." spellcheck="false" title="consult / explore の対象 repo"
+         style="flex:1;min-width:120px;max-width:460px;background:#fff;border:1px solid var(--edge);border-radius:6px;padding:4px 9px;font:12px/1.4 inherit;color:var(--ink)">
   <span id="status" class="bad"><span class="dot"></span>reader: …</span>
 </header>
 
 <div class="grid">
-  <!-- LEFT: reader mirror -->
+  <!-- LEFT: reader mirror (observation only — the human talks to the worker) -->
   <section class="lane reader">
     <h2>reader <small id="rlabel">…</small></h2>
     <div class="body" id="mirror"></div>
-    <div class="repo-row"><span class="lbl">repo</span>
-      <input id="repo" value="." spellcheck="false" title="consult / explore の対象 repo(絶対パス可)"></div>
-    <div class="foot">
-      <textarea id="q" rows="1" placeholder="repo への質問… (Enter で consult)" spellcheck="false"></textarea>
-      <button class="go" id="consultBtn" onclick="consult()">consult ▶</button>
-    </div>
   </section>
 
   <!-- MIDDLE: fetch traffic (star) -->
@@ -132,13 +129,11 @@ const ts = () => new Date().toTimeString().slice(0,8);
 function atBottom(el){return el.scrollHeight - el.scrollTop - el.clientHeight < 40;}
 function scroll(el){el.scrollTop = el.scrollHeight;}
 function autogrow(el){el.style.height='auto';el.style.height=Math.min(el.scrollHeight,120)+'px';}
-['q','w'].forEach(id=>$(id).addEventListener('input',e=>autogrow(e.target)));
+$('w').addEventListener('input',e=>autogrow(e.target));
 
 // ---- busy state drives the buttons (no dead 40s) ----
-let consultBusy=false, workerBusy=false;
+let workerBusy=false;
 function paintButtons(){
-  const c=$('consultBtn'); c.disabled=consultBusy;
-  if(!consultBusy) c.textContent='consult ▶';
   $('sendBtn').disabled=workerBusy; $('exploreBtn').disabled=workerBusy;
 }
 
@@ -217,9 +212,6 @@ ev.onmessage = e => {
       break; }
     case 'mirror': renderMirror(m.turns); break;
     case 'consult':
-      if(m.status==='start'||m.status==='briefed') consultBusy=true;
-      if(m.status==='done'||m.status==='error') consultBusy=false;
-      paintButtons();
       traffic(`<span class="rnd">consult</span> ${esc(m.status)}${m.repo?' · '+esc(m.repo):''}${m.detail?' · '+esc(m.detail):''}`, 'consult');
       break;
     case 'explore':
@@ -227,7 +219,7 @@ ev.onmessage = e => {
       break;
     case 'fetch': {
       const who = m.who||'reader';
-      if(who==='reader' && consultBusy){ $('consultBtn').textContent = `consult… round ${m.round}`; }
+      if(who==='reader' && workerBusy){ $('wstate').textContent = `reader reading… round ${m.round}`; }
       traffic(`<span class="who ${who}">${who}</span><span class="rnd">round ${m.round} · fetch</span><br><code>${esc(m.names)}</code>`, 'fetch '+who);
       break; }
     case 'served': {
@@ -244,17 +236,22 @@ function onWorker(m){
   switch(m.status){
     case 'history': case 'msg': wTurn(m.role, m.content);
       if(m.status==='msg'){ workerBusy=false; $('wstate').textContent='idle'; paintButtons(); } break;
-    case 'start': case 'forwarded':
+    case 'start':
       wTurn(m.role||'user', m.content);
-      workerBusy = m.status!=='forwarded';
-      $('wstate').textContent = m.status==='forwarded'?'idle':'thinking…'; paintButtons(); break;
+      workerBusy=true; $('wstate').textContent='thinking…'; paintButtons(); break;
+    case 'forwarded':
+      wCur=null; wTurn(m.role||'user', m.content);
+      if(!workerBusy) $('wstate').textContent='idle';
+      paintButtons(); break;
+    case 'consulting':
+      wCur=null; $('wstate').textContent='consulting reader…'; break;
     case 'exploring': workerBusy=true; $('wstate').textContent = `exploring… round ${m.round}`; paintButtons(); break;
     case 'delta':
       if(!wCur) wCur = wTurn('assistant','');
       wCur.textContent += m.content; scroll($('worker')); break;
     case 'done': wCur=null; workerBusy=false; $('wstate').textContent='idle'; paintButtons(); break;
     case 'busy': $('wstate').textContent = 'busy — 前の応答を待って'; break;
-    case 'error': wCur=null; workerBusy=false; consultBusy=false; paintButtons();
+    case 'error': wCur=null; workerBusy=false; paintButtons();
       $('wstate').textContent = 'error'; traffic('worker error: '+esc(m.detail),'served'); break;
   }
 }
@@ -264,17 +261,9 @@ async function post(path, body){
   const r = await fetch(path, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body||{})});
   return r.json().catch(()=>({}));
 }
-function consult(){
-  const question = $('q').value.trim(); if(!question||consultBusy) return;
-  consultBusy=true; paintButtons(); $('consultBtn').textContent='consult…';
-  post('/consult', {repo:$('repo').value.trim(), question}).then(r=>{
-    if(r.error){ consultBusy=false; paintButtons(); traffic('consult error: '+esc(r.error)+(r.detail?' — '+esc(r.detail):''),'served'); }
-  });
-  $('q').value=''; autogrow($('q'));
-}
 function wsend(){
   const message = $('w').value.trim(); if(!message||workerBusy) return;
-  post('/worker', {message}); $('w').value=''; autogrow($('w'));
+  post('/worker', {message, repo:$('repo').value.trim()}); $('w').value=''; autogrow($('w'));
 }
 function explore(){
   const task = $('w').value.trim(); if(!task||workerBusy) return;
@@ -282,8 +271,7 @@ function explore(){
 }
 function forward(btn){ if(btn){btn.disabled=true; btn.textContent='forwarded ✓';} post('/forward', {}); }
 
-// keyboard: Enter fires, Shift+Enter = newline (both lanes)
-$('q').addEventListener('keydown', e=>{ if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();consult();} });
+// keyboard: Enter fires, Shift+Enter = newline
 $('w').addEventListener('keydown', e=>{ if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();wsend();} });
 </script>
 </body>
