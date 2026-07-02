@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # consult-cockpit launcher — portable, zero-venv.
 #
-#   bash run.sh [REPO]     launch pointed at REPO (default: current dir), open browser
-#   bash run.sh doctor     validate prerequisites and exit
+#   bash run.sh [REPO]                    launch pointed at REPO (default: current dir)
+#   bash run.sh doctor                    validate prerequisites and exit
+#   bash run.sh auth set|get|delete LANE  API key in the macOS keychain (LANE: worker|reader)
 #
-# Prerequisites (see `doctor`): python3, the chatgpt-web skill (Chrome/CDP +
-# one-time ChatGPT sign-in), and a .env with WORKER_LLM_* (shippable internally).
+# Prerequisites (see `doctor`): python3 and a worker LLM endpoint (WORKER_LLM_*
+# in .env; the API key may live in the keychain instead — `auth set worker`).
+# The chatgpt-web skill (Chrome/CDP + ChatGPT sign-in) is optional: without it
+# the cockpit runs worker-only.
 # Overrides: COCKPIT_PYTHON, COCKPIT_SCRIPTS, COCKPIT_ENV, COCKPIT_PORT.
 set -euo pipefail
 
@@ -18,6 +21,11 @@ open_url() { command -v open >/dev/null && open "$1" || { command -v xdg-open >/
 
 if [ "${1:-}" = "doctor" ] || [ "${1:-}" = "--doctor" ]; then
   exec "$PY" "$HERE/src/server.py" doctor
+fi
+
+if [ "${1:-}" = "auth" ]; then
+  shift
+  exec "$PY" "$HERE/src/secrets_store.py" auth-lane "$@"
 fi
 
 # already running? just open the browser for the live instance.
