@@ -12,13 +12,23 @@ Search order (first readable file wins; never overwrites already-exported vars):
 import os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# Internal-machine fallback — DELETE THIS LINE for the public release
+# (an internal path must not ship; see _dev/design_auth.md).
+_INTERNAL_FALLBACK = os.path.expanduser("~/.claude/lib/improver/.env")
 CANDIDATES = [
     os.environ.get("COCKPIT_ENV"),
     os.path.join(HERE, ".env"),
-    os.path.expanduser("~/.claude/lib/improver/.env"),
+    _INTERNAL_FALLBACK,
 ]
-REQUIRED = ("WORKER_LLM_BASE_URL", "WORKER_LLM_API_KEY",
-            "WORKER_LLM_MODEL", "WORKER_LLM_PROVIDER")
+# API key is NOT required here: it may live in the keychain (secrets_store)
+# instead of any .env. PROVIDER is optional (defaults to "openai").
+REQUIRED = ("WORKER_LLM_BASE_URL", "WORKER_LLM_MODEL")
+
+# Names injected into os.environ by load_env (as opposed to vars that were
+# already set when the process started). llm_client uses this to implement the
+# key precedence "explicit env var > keychain > .env value" — without it, a
+# stale .env key would masquerade as an explicit override and beat the keychain.
+_injected = set()
 
 
 def _parse(text):
@@ -62,7 +72,16 @@ def load_env():
         applied[k] = v
         if k not in os.environ and v:
             os.environ[k] = v
+            _injected.add(k)
     return applied
+
+
+def from_live_env(name):
+    """Return os.environ[name] only if it was set by the caller's environment,
+    not injected from a .env file by load_env(). None otherwise."""
+    if name in _injected:
+        return None
+    return os.environ.get(name) or None
 
 
 def missing_required():

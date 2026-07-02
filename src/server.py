@@ -52,7 +52,7 @@ except ImportError as e:
 
 import env as cockpit_env  # noqa: E402
 import repo_fetch  # noqa: E402  (cockpit-owned fork of nav's pure repo layer)
-from gemma_chat import stream_chat  # noqa: E402
+from llm_client import stream_chat, resolve_lane  # noqa: E402
 
 PORT = int(os.environ.get("COCKPIT_PORT", "8079"))
 DEFAULT_REPO = os.environ.get("COCKPIT_REPO") or os.path.expanduser(
