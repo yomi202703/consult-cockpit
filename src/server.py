@@ -627,6 +627,10 @@ def doctor() -> int:
     if nav is None:
         print(f"  [off ] dedicated Chrome :9333 — "
               f"{'reachable but unused' if chrome else 'down'} (lane disabled)")
+    elif _API_READER0 is not None:
+        # the API reader owns consult; Chrome is unused, so never a failure
+        print(f"  [off ] dedicated Chrome :9333 — "
+              f"{'reachable but unused' if chrome else 'down'} (API reader active)")
     else:
         line(chrome, "dedicated Chrome :9333", "reachable" if chrome else
              "down — start via chatgpt-web (ask.py up) and sign in")
