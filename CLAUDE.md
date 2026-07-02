@@ -15,7 +15,7 @@ in README.md and SKILL.md; this file is only what a fresh session gets wrong.
 - The dedicated Chrome on port 9333 must be running and signed into ChatGPT — that
   is the chatgpt-web skill's browser (Cloudflare cleared by hand once). This repo
   does not manage sign-in.
-- A `.env` with `WORKER_LLM_*` (the Gemma endpoint). `env.py` resolves it in order
+- A `.env` with `WORKER_LLM_*` (the Gemma endpoint). `src/env.py` resolves it in order
   `$COCKPIT_ENV` → `./.env` → `~/.claude/lib/improver/.env`. Missing → the right
   lane errors; `doctor` says so.
 
@@ -31,11 +31,14 @@ Touch the explore loop or `/forward` → preserve this. It is why Gemma's small
 context survives. Rationale: `_dev/decisions.md` (2026-07-01).
 
 ## Conventions a newcomer gets wrong
+- All runtime code lives in `src/` (server / gemma_chat / env + static); the repo
+  root holds only entry/meta (`run.sh`, README, SKILL, CLAUDE). Put new modules in
+  `src/`, not the root.
 - `nav`/`ask`/`cdp` are IMPORTED as a library from the chatgpt-web skill
   (`COCKPIT_SCRIPTS`), not vendored here. Do not copy or edit them in this repo —
   fix upstream in chatgpt-web.
 - All CDP tab access is serialized onto the single tab-controller thread in
-  `server.py`. Never call `ws.*` from a request handler or a Gemma thread; hand
+  `src/server.py`. Never call `ws.*` from a request handler or a Gemma thread; hand
   work to the controller. Gemma chat/explore are network-only and safely concurrent.
 - Governance lives in `_dev/` (STATUS / decisions / TODO), the owner's convention —
   not `docs/`.

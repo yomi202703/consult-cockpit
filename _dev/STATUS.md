@@ -1,6 +1,9 @@
 # STATUS — consult-cockpit
 
-更新: 2026-07-01
+更新: 2026-07-02
+
+構成: ランタイムは `src/`(server / gemma_chat / env + static)、governance は `_dev/`(オーナー規約)。
+ルートは入口/メタのみ。詳細 `_dev/decisions.md` 2026-07-02。
 
 動くもの（検証済み）:
 - 3レーン(左 ChatGPT ミラー / 中央 fetch トラフィック / 右 Gemma)。白ベース UI。

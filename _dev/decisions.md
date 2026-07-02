@@ -33,6 +33,16 @@
   **一時 context** にだけ入り、**永続**の Gemma 履歴には最終回答しか残さない。だから履歴は痩せたまま。
 - 中央レーンは who タグ(chatgpt=青 / gemma=緑)で色分け。「誰がどのファイルを読んでいるか」が主役。
 
+## 2026-07-02 repo-shape：ランタイムを src/ に集約
+
+- `server.py` / `gemma_chat.py` / `env.py` / `static/` を `src/` へ git-mv(履歴保持)。
+  ルートは入口/メタ(run.sh・README・SKILL・CLAUDE)のみに。普遍レイヤーの source スロット化。
+- 波及: run.sh 2箇所を `$HERE/src/server.py` に、README/SKILL の Files 一覧を src/ プレフィックスへ。
+  import は3モジュールが兄弟ごと移動で無変更、`INDEX = join(HERE,"static",…)` も HERE(=src/) 基準で解決。
+- 手順: オーナー判断でブランチ不要・main 直接。`run.sh doctor` 緑(唯一の FAIL=Chrome:9333 down は
+  手動停止中の別件で、移動とは無関係)。
+- 維持した既存の逸脱: governance は `_dev/`(docs/ でなく)、nav/ask/cdp は非vendored import。
+
 ## 2026-07-01 移植性：improver/venv/httpx から脱依存（bare python3 化）
 
 - 気づき: コックピットが improver から使っていたのは env_loader(.env 読むだけ)。gemma_subagent は

@@ -61,9 +61,9 @@ answer joins the chat. See `_dev/decisions.md`.
 
 ## Files
 
-- `server.py` — SSE hub, single CDP tab-controller thread, consult loop, Gemma
+- `src/server.py` — SSE hub, single CDP tab-controller thread, consult loop, Gemma
   explore loop, routes, `doctor`.
-- `gemma_chat.py` — free-form streaming client (stdlib urllib).
-- `env.py` — .env reader (decouples from improver).
-- `static/index.html` — the 3-lane UI (no build step, no deps).
+- `src/gemma_chat.py` — free-form streaming client (stdlib urllib).
+- `src/env.py` — .env reader (decouples from improver).
+- `src/static/index.html` — the 3-lane UI (no build step, no deps).
 - `run.sh` — launcher + doctor.

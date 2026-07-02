@@ -17,7 +17,7 @@ export COCKPIT_SCRIPTS="${COCKPIT_SCRIPTS:-$HOME/.claude/skills/chatgpt-web/scri
 open_url() { command -v open >/dev/null && open "$1" || { command -v xdg-open >/dev/null && xdg-open "$1" || echo "  open: $1"; }; }
 
 if [ "${1:-}" = "doctor" ] || [ "${1:-}" = "--doctor" ]; then
-  exec "$PY" "$HERE/server.py" doctor
+  exec "$PY" "$HERE/src/server.py" doctor
 fi
 
 # already running? just open the browser for the live instance.
@@ -32,4 +32,4 @@ REPO="$(cd "$REPO" 2>/dev/null && pwd || echo "$REPO")"
 export COCKPIT_REPO="$REPO"
 
 ( sleep 1.2; open_url "http://127.0.0.1:$PORT/" ) &
-exec "$PY" "$HERE/server.py"
+exec "$PY" "$HERE/src/server.py"
