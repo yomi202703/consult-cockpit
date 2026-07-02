@@ -54,7 +54,16 @@ reader 用に import(書き換えず): `nav.{connect,get_state,find_fetch,send_m
 
 - `GET /` UI / `GET /events` SSE / `GET /state` 現在の worker 履歴・レーン構成
 - `POST /consult {repo,question}` / `POST /worker {message}` / `POST /worker-explore {repo,task}` / `POST /forward`
-  (旧 `/gemma`, `/gemma-explore` は互換エイリアス・公開時に削除)
+
+## テスト
+
+```
+python3 -m unittest discover tests   # 純粋層のスモーク(ネットワーク・キーチェーン非使用)
+```
+
+## ライセンス
+
+MIT（`LICENSE`）。
 
 ## 検証済み(2026-07-01)
 

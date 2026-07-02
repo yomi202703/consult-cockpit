@@ -64,8 +64,8 @@ answer joins the chat. See `_dev/decisions.md`.
 
 ## Files
 
-- `src/server.py` — SSE hub, single CDP tab-controller thread, consult loop, worker
-  explore loop, routes (`/worker`, `/worker-explore`; `/gemma*` legacy aliases), `doctor`.
+- `src/server.py` — SSE hub, single CDP tab-controller thread, consult loops
+  (API reader + scrape reader), worker explore loop, routes, `doctor`.
 - `src/llm_client.py` — lane config (resolve_lane) + provider adapter table +
   streaming client (stdlib urllib, OpenAI-compatible).
 - `src/secrets_store.py` — macOS keychain store for API keys (`run.sh auth`).

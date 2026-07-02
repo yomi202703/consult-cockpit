@@ -2,6 +2,20 @@
 
 過去エントリは書き換えない。
 
+## 2026-07-03 公開準備：スクラブ・alias 削除・LICENSE・スモークテスト
+
+- 内部資産スクラブ実施: env.py の `_INTERNAL_FALLBACK`(improver/.env) 削除(ローカル動作は
+  improver の .env を src/.env にコピーして維持 — gitignore 済み)。DEFAULT_REPO の
+  `~/pi-workspace/nav-demo` フォールバック→cwd。UI の repo 欄既定値→"."。docs の
+  improver 言及を除去。スクラブ grep(improver|pi-workspace|内部URL)は _dev/ 以外ゼロ。
+- /gemma* legacy alias を削除(実測 404)。導入から削除まで1日 — alias の寿命としては最短健全。
+- LICENSE: MIT(holder=yomi202703)。tests/: stdlib unittest のスモーク12本
+  (repo_fetch のパス安全・コマンド実行、env の優先順位ヘルパー、adapter のパース、
+  resolve_lane×キーチェーン stub)。ネットワーク・実キーチェーン非使用。
+  テストが env.py の unclosed file 警告を炙り出し→修正。
+- 残る公開ゲートは技術外のみ: 雇用者サインオフ、GitHub リポジトリ作成(公開行為そのもの)。
+  コードは公開可能な状態。
+
 ## 2026-07-03 API reader 配線：consult がブラウザ無しで動く
 
 - `READER_LLM_*` を実配線。consult の dispatch: API reader 設定あり→ `_run_api_consult`

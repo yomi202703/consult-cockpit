@@ -1,24 +1,18 @@
-"""Tiny .env reader — decouples the cockpit from the improver package.
+"""Tiny .env reader — stdlib only, no dotenv dependency.
 
-The cockpit only ever needed improver for `.env` parsing (WORKER_LLM_*), not the
-heavy langgraph venv. Reading it here means the whole tool runs under a bare
-python3 (no venv, no pip) on any internal machine that has the .env.
+Reading the .env here means the whole tool runs under a bare python3 (no venv,
+no pip) on any machine that has the .env.
 
 Search order (first readable file wins; never overwrites already-exported vars):
-  1. $COCKPIT_ENV                    explicit override
-  2. <cockpit>/.env                  local, e.g. shipped to an internal machine
-  3. ~/.claude/lib/improver/.env     this machine's existing config (fallback)
+  1. $COCKPIT_ENV      explicit override
+  2. <cockpit>/.env    local (next to the sources)
 """
 import os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-# Internal-machine fallback — DELETE THIS LINE for the public release
-# (an internal path must not ship; see _dev/design_auth.md).
-_INTERNAL_FALLBACK = os.path.expanduser("~/.claude/lib/improver/.env")
 CANDIDATES = [
     os.environ.get("COCKPIT_ENV"),
     os.path.join(HERE, ".env"),
-    _INTERNAL_FALLBACK,
 ]
 # API key is NOT required here: it may live in the keychain (secrets_store)
 # instead of any .env. PROVIDER is optional (defaults to "openai").
@@ -65,7 +59,8 @@ def load_env():
     if not path:
         return applied
     try:
-        data = _parse(open(path).read())
+        with open(path) as f:
+            data = _parse(f.read())
     except OSError:
         return applied
     for k, v in data.items():

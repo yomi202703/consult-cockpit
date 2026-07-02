@@ -17,7 +17,7 @@ is in README.md and SKILL.md; this file is only what a fresh session gets wrong.
   OPTIONAL: without it the cockpit runs worker-only (/consult returns 503). This
   repo does not manage sign-in; Chrome autolaunch is off (`ask.py up` starts it).
 - Worker config: `WORKER_LLM_BASE_URL/_MODEL` in a `.env` (`src/env.py` resolves
-  `$COCKPIT_ENV` → `./.env` → `~/.claude/lib/improver/.env`). The API key resolves
+  `$COCKPIT_ENV` → `src/.env`). The API key resolves
   explicit env var > keychain (`bash run.sh auth set worker`) > .env value — a key
   in a stale .env does NOT beat the keychain (env.from_live_env/_injected). doctor
   prints which source won.
@@ -44,8 +44,8 @@ context survives. Rationale: `_dev/decisions.md` (2026-07-01).
   repo_fetch.py.
 - Adding a provider dialect = one 4-field entry in llm_client.ADAPTERS
   (path/headers/payload/parse_line), not a class hierarchy.
-- Routes are /worker, /worker-explore; /gemma* are legacy aliases slated for
-  removal at public release (same branch — never duplicate the handler body).
+- Routes are /worker, /worker-explore (the /gemma* aliases were removed for the
+  public release).
 - All CDP tab access is serialized onto the single tab-controller thread in
   `src/server.py`. Never call `ws.*` from a request handler or a worker thread;
   hand work to the controller. Worker chat/explore are network-only and safely

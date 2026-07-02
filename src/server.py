@@ -31,9 +31,9 @@ import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-# --- path bridge: only the chatgpt-web scripts (stdlib-only). No improver, no
-#     venv — the cockpit reads the .env itself (env.py) and talks to Gemma over
-#     stdlib urllib, so it runs under a bare python3 anywhere. -----------------
+# --- path bridge: only the chatgpt-web scripts (stdlib-only, optional). No
+#     venv — the cockpit reads the .env itself (env.py) and talks to the LLM
+#     over stdlib urllib, so it runs under a bare python3 anywhere. ------------
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.environ.get("COCKPIT_SCRIPTS") or os.path.expanduser(
     "~/.claude/skills/chatgpt-web/scripts")
@@ -57,8 +57,7 @@ import repo_fetch  # noqa: E402  (cockpit-owned fork of nav's pure repo layer)
 from llm_client import stream_chat, resolve_lane  # noqa: E402
 
 PORT = int(os.environ.get("COCKPIT_PORT", "8079"))
-DEFAULT_REPO = os.environ.get("COCKPIT_REPO") or os.path.expanduser(
-    "~/pi-workspace/nav-demo")
+DEFAULT_REPO = os.environ.get("COCKPIT_REPO") or os.getcwd()
 FORWARD_CAP = 8 * 1024        # max reader answer bytes handed to the worker
 MAX_CONSULT_ROUNDS = 8
 WORKER_EXPLORE_ROUNDS = 4     # keep it snappy: the worker explores locally in few rounds
@@ -553,13 +552,13 @@ class Handler(BaseHTTPRequestHandler):
                                         "detail": _NAV_ERR})
             _cmd_q.put({"type": "consult", "repo": repo, "question": question})
             self._json(202, {"queued": True, "repo": repo})
-        elif self.path in ("/worker", "/gemma"):        # /gemma = legacy alias, remove at public release
+        elif self.path == "/worker":
             msg = (body.get("message") or "").strip()
             if not msg:
                 return self._json(400, {"error": "message required"})
             threading.Thread(target=_run_worker, args=(msg,), daemon=True).start()
             self._json(202, {"queued": True})
-        elif self.path in ("/worker-explore", "/gemma-explore"):  # legacy alias, same branch
+        elif self.path == "/worker-explore":
             task = (body.get("task") or "").strip()
             repo = body.get("repo") or DEFAULT_REPO
             if not task:
@@ -598,7 +597,7 @@ def doctor() -> int:
              "nav/ask/cdp import", "importable")
 
     src = cockpit_env.env_source()
-    line(bool(src), ".env found", src or "none of: $COCKPIT_ENV, ./.env, improver/.env")
+    line(bool(src), ".env found", src or "none of: $COCKPIT_ENV, src/.env")
     miss = cockpit_env.missing_required()
     wcfg = None
     if not miss:
