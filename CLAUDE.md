@@ -1,6 +1,6 @@
 # consult-cockpit — repo memory
 
-3-lane browser cockpit: a worker LLM (any OpenAI-compatible endpoint; today a
+Single-lane agent-chat cockpit: a worker LLM (any OpenAI-compatible endpoint; today a
 local Gemma) and a reader (today the signed-in web ChatGPT over CDP) both explore
 a repo; you watch "who reads which file" and hand results between them. What/why
 is in README.md and SKILL.md; this file is only what a fresh session gets wrong.
@@ -28,7 +28,8 @@ Raw repo file bodies never enter the worker's PERSISTENT chat history.
   contents) lives in a TRANSIENT working list inside `_run_worker`; only the
   user turn and the final answer join `_worker_history`.
 - consult (the reader reads): `run_commands` output goes only to the reader tab
-  and the middle lane — never to the worker's persistent history.
+  (and byte-counts/names to SSE for the tool cards) — never to the worker's
+  persistent history.
 - forward: crosses only the reader's answer text, capped 8KB.
 Touch `_run_worker`, the explore loop, or `/forward` → preserve this. It is why
 the worker's small context survives. Rationale: `_dev/decisions.md` (2026-07-01,

@@ -268,23 +268,27 @@ class TabController(threading.Thread):
             self.ws = None
 
     def _wait_with_heartbeat(self, after_count):
-        """nav.wait_complete, but emit a 'waiting' tick every few seconds so the
-        UI never looks frozen during a slow reader turn, and bound the wait."""
-        stop = threading.Event()
+        """nav.wait_complete, but each poll (~2s) emits a 'waiting' tick and a
+        live mirror, so the consult card streams the reader's in-progress turn.
+        The on_poll callback runs inline in wait_complete's own loop on this
+        (controller) thread — the single-CDP-thread invariant holds. It uses
+        the ws it is HANDED (self.ws goes stale after a mid-wait reload) and
+        not _emit_mirror (whose error path sets self.ws=None, which would
+        fight wait_complete's own recovery)."""
+        t0 = time.time()
 
-        def beat():
-            t0 = time.time()
-            while not stop.wait(5):
-                broadcast("consult", {"status": "waiting",
-                                      "secs": int(time.time() - t0)})
-        hb = threading.Thread(target=beat, daemon=True)
-        hb.start()
-        try:
-            return nav.wait_complete(self.ws, self.target,
-                                     after_count=after_count,
-                                     max_wait=CONSULT_WAIT_CAP)
-        finally:
-            stop.set()
+        def on_poll(ws):
+            broadcast("consult", {"status": "waiting",
+                                  "secs": int(time.time() - t0)})
+            try:
+                turns = json.loads(ws.evaluate(MIRROR_JS))
+                if turns:   # mid-reload DOM is empty — keep the last snapshot
+                    broadcast("mirror", {"turns": turns})
+            except Exception:  # noqa: BLE001
+                pass   # a dead ws surfaces via get_state inside wait_complete
+        return nav.wait_complete(self.ws, self.target,
+                                 after_count=after_count,
+                                 max_wait=CONSULT_WAIT_CAP, on_poll=on_poll)
 
     def _run_consult(self, root: str, question: str):
         """Returns the reader's answer text, or None on failure/empty/timeout."""

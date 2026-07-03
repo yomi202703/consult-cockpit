@@ -273,14 +273,21 @@ def find_fetch(blocks):
     return None
 
 
-def wait_complete(ws, target, after_count, max_wait=300):
+def wait_complete(ws, target, after_count, max_wait=300, on_poll=None):
     """Wait for a completed assistant turn beyond after_count: generation idle and
     text stable. Recover from reasoning-model stalls (empty/stuck) by reloading to
-    re-read the server-side reply, like ask.py. Returns (ws, state)."""
+    re-read the server-side reply, like ask.py. Returns (ws, state).
+    If on_poll is given it is invoked as on_poll(ws) once per poll on the calling
+    thread (ws may change across calls after a reload); exceptions are swallowed."""
     prev = ""; stable = 0; empty = 0; reloaded = False
     deadline = time.time() + max_wait
     while time.time() < deadline:
         st = get_state(ws)
+        if on_poll:
+            try:
+                on_poll(ws)
+            except Exception:
+                pass
         count, gen, text = st.get("count", 0), st.get("gen"), st.get("text", "")
         if count > after_count and not gen and text:
             if text == prev:

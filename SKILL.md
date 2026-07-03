@@ -1,25 +1,24 @@
 ---
 name: consult-cockpit
-description: Launch a 3-lane browser cockpit where a worker LLM (any OpenAI-compatible endpoint; today a local Gemma) and a reader (today the signed-in web ChatGPT) both explore a repo — the worker reads locally (fast, small repos), the reader reads via the chatgpt-web consult loop (context offload, big/cross-file), and you hand results between them. Use when you want to point two models at a repo and watch "who is reading which file" live. Triggers — "cockpit", "consult cockpit", pointing it at a repo.
+description: Launch a single-lane agent-chat cockpit over a repo — you talk to a worker LLM (any OpenAI-compatible endpoint; today a local Gemma) that reads the repo itself when needed (fetch, autonomous) or asks a stronger reader (today the signed-in web ChatGPT) on your explicit request (consult). Who-read-which-file stays visible as collapsible cards in the conversation. Use when you want a small model to work a repo without bloating its context, with the offload observable. Triggers — "cockpit", "consult cockpit", pointing it at a repo.
 ---
 
 ## What it is
 
-One browser page, three lanes:
-- left = reader mirror (the real signed-in ChatGPT tab, read over CDP; shows
-  "disabled" when chatgpt-web is absent — the cockpit still runs worker-only)
-- middle = fetch traffic — what files are being read, by whom (the star)
-- right = worker free-form chat, and worker local repo exploration
+One browser page, one conversation with the worker. The worker has two tools;
+each tool round is transient (the offload invariant) and leaves a collapsible
+card in the conversation:
+- 🔧 fetch card — the worker read the repo ITSELF (autonomous, cheap, ~4s;
+  expand to see what it READ/GREPed and how many bytes were served).
+- 🔍 consult card — the reader (ChatGPT) studied the repo on the user's explicit
+  request ("ChatGPTに聞いて"), slow (~40s, browser-driven); expand DURING the
+  run to watch live which files the reader is fetching (the old mirror lane,
+  folded into the card).
+- ask reader ▶ — direct consult from the input box; the raw answer lands as an
+  inline card with a [⇥ worker に渡す] (forward) action.
+- status pill above the input: 考え中… / repo を読み中… / ChatGPT に質問中… Ns.
 
-Two ways to put repo knowledge into an answer:
-- consult ▶ (left) — the reader reads the repo via the chatgpt-web fetch protocol.
-  Slow (~40s, browser-driven) but offloads reading to the reader's big context. For
-  large / cross-file work where the worker's context would overflow.
-- explore repo ▶ (right) — the worker reads the repo itself via the same protocol,
-  direct API, no browser. Fast (~4s). For small / targeted work. Repo bytes enter
-  only a transient sub-context; the persistent worker chat stays lean.
-- forward ⇥ (right) — hand the reader's last answer into the worker chat (answer
-  text only, capped 8KB). This is the human-driven handoff.
+Reader absent → worker-only mode (consult unavailable, `/consult` 503).
 
 ## Run it
 
@@ -72,5 +71,5 @@ answer joins the chat. See `_dev/decisions.md`.
 - `src/secrets_store.py` — macOS keychain store for API keys (`run.sh auth`).
 - `src/repo_fetch.py` — read-only repo fetch layer (ownership fork of nav's pure block).
 - `src/env.py` — .env reader (+ from_live_env implementing the key precedence).
-- `src/static/index.html` — the 3-lane UI (no build step, no deps).
+- `src/static/index.html` — the single-lane agent-chat UI (no build step, no deps).
 - `run.sh` — launcher + doctor + auth.

@@ -1,0 +1,108 @@
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3レーン→単一エージェント会話に畳むか — 意思決定ブリーフィング</title>
+<style>
+  :root{--ink:#1a1d21;--muted:#6b727b;--line:#d7dce1;--bg:#fbfcfd;--card:#fff;--accent:#2d6cdf;
+    --hot:#c0392b;--hotbg:#fdeeec;--hotline:#f0c6bf;--ok:#2c7a4b;--okbg:#eef6f1;--imp:#2d6cdf;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;
+    color:var(--ink);background:var(--bg);line-height:1.55;font-size:15px}
+  header.top{background:#1f2429;color:#fff;padding:18px 28px}
+  header.top h1{margin:0;font-size:18px;font-weight:700}
+  header.top .sub{margin-top:4px;color:#aeb6bf;font-size:12.5px}
+  main{max-width:860px;margin:0 auto;padding:16px 24px 56px}
+  .decide{background:#fff8e6;border:1px solid #efd98a;border-radius:8px;padding:9px 13px;font-size:13px;margin-bottom:16px}
+  .decide b{color:#8a6d1a}
+  h2{font-size:13.5px;margin:22px 0 10px;padding-bottom:5px;border-bottom:2px solid var(--ink);display:flex;align-items:center;gap:8px}
+  h2 .n{font-size:10.5px;color:var(--muted);font-weight:600}
+  .locked{border:1px solid var(--line);border-left:4px solid var(--ok);border-radius:9px;background:var(--okbg);padding:8px 13px}
+  .locked .l{font-size:12.5px;color:#2a4a38;padding:3px 0;border-top:1px dashed #cfe3d7}
+  .locked .l:first-child{border-top:0} .locked .l b{color:var(--ok)}
+  .map{border:1px solid var(--line);border-radius:10px;background:var(--card);overflow:hidden}
+  .mrow{display:grid;grid-template-columns:26px 1fr 150px;gap:12px;align-items:center;padding:11px 13px;border-top:1px solid var(--line)}
+  .mrow:first-child{border-top:0}
+  .rk{font-size:15px;font-weight:800;color:var(--muted);text-align:center}
+  .mt{font-size:13px} .mt b{font-weight:700}
+  .mt .rec{color:var(--accent);font-size:11.5px;margin-top:2px} .mt .rec b{color:var(--accent)}
+  .barwrap{display:flex;align-items:center;gap:8px}
+  .track{flex:1;height:9px;background:#eef1f4;border-radius:5px;overflow:hidden}
+  .fill{height:100%;border-radius:5px;background:var(--imp)}
+  .pct{flex:0 0 26px;font-size:11px;font-weight:700;color:var(--imp);text-align:right}
+  .strike{border:1px solid var(--hotline);border-left:4px solid var(--hot);border-radius:9px;background:var(--hotbg);padding:9px 13px;font-size:12.5px;color:#7a3a30}
+  .strike b{color:var(--hot)}
+  .fork{border:1px solid var(--line);border-radius:9px;background:var(--card);padding:6px 13px}
+  .fork .f{padding:7px 0;border-bottom:1px dashed var(--line);font-size:13px} .fork .f:last-child{border-bottom:0}
+  .fork .q{font-weight:700} .fork .opt{color:#3a3f45;font-size:12.5px;margin-top:2px}
+  .fork .mine{color:var(--accent);font-weight:700}
+  .ascii{font-family:ui-monospace,Menlo,monospace;font-size:11px;background:#f4f6f8;border:1px solid var(--line);border-radius:7px;padding:10px 12px;white-space:pre;overflow-x:auto;color:#333;margin:8px 0}
+  footer{max-width:860px;margin:0 auto;padding:12px 24px;color:var(--muted);font-size:12px;border-top:1px solid var(--line)}
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>3レーン → 単一エージェント会話に畳むか</h1>
+  <div class="sub">畳むこと自体はほぼ合意・ほぼ可逆(index.html だけ)。本当に決めるのは「観測=誰がどのファイルを読むか、を残すか捨てるか」。それがツールの identity を決める。</div>
+</header>
+<main>
+  <div class="decide"><b>設計は解けた(settle 手前 ~90%)。</b> 両フォークに号令済み → あとは実装。今出す最後の号令: <b>この形で作ってよいか / 直す所はないか</b>。</div>
+
+  <div class="ascii">今 (3レーン)                        案 (1レーン・agent chat)
+┌────────┬────────┬────────┐        ┌──────────────────────┐
+│ reader │ fetch  │ worker │        │  あなた: env.py 見て   │
+│ ミラー │トラフィ│ chat   │   →    │  🔧 env.py を読み中…   │  ← status/tool
+│(左・観 │ック(中 │(右・唯 │        │  worker: 優先順位は... │
+│ 測専用)│・主役) │一入力) │        │  [🔍 読んだ物 ▸展開]   │  ← 観測は畳む?捨てる?
+└────────┴────────┴────────┘        └──────────────────────┘</div>
+
+  <h2><span>決着済み(再燃させない)</span><span class="n">§1 / 今セッションの流れ</span></h2>
+  <div class="locked">
+    <div class="l"><b>✓</b> 人間は worker としか話さない(左の入力は削除して純ミラー化・consult も explore も worker のツールに)。UX はずっと「右1本」へ収束してきた ── 今回の1レーン案はその自然な終点。</div>
+    <div class="l"><b>✓</b> worker は2ツールのエージェント: fetch(自律・安い) / consult(明示・高い)。tool 呼び出しは既に 🔧 行に畳んで表示済み(toolcall イベント)。</div>
+    <div class="l"><b>✓</b> 単一レーン化に <b>サーバ変更はほぼ不要</b>。必要な SSE は全部ある(worker delta / toolcall / fetch / served / consult status＋waiting 経過 / answer / mirror)。中央・左は同じイベントの別描画にすぎない ── ほぼ index.html だけの書き換え・可逆。</div>
+    <div class="l"><b>✓</b> <b>3→1レーンに畳む</b>。観測は捨てず <b>(A) 会話に折り畳んで残す</b>(ChatGPT の「検索しました ▸」式)。既定は綺麗な1会話、押せば「何を読んだか/ChatGPT の探索」が展開。</div>
+    <div class="l"><b>✓</b> <b>長い consult(~40s)</b>: 畳んでいる間は「ChatGPTに質問中… Ns」、<b>consult カードを展開すると live mirror</b>(今どのファイルを読んでいるか)。唯一の live 観測を温存し「固まって見える」再発を防ぐ。</div>
+    <div class="l"><b>✓</b> <b>status は具体段階＋経過秒</b>(「env.py を読み中」「ChatGPTに質問中 12s」)。既に持つ toolcall.summary / waiting.secs を使う。ChatGPT 風「考え中」アニメは装飾として上に乗せるだけ。</div>
+    <div class="l"><b>✓</b> 実装は <b>index.html を単一レーンに書き換え・サーバは触らない</b>(mirror イベントは consult 展開用に残す)。3レーン版は git に残り可逆。</div>
+    <div class="l"><b>✓</b> <b>ask reader ▶ ボタンは残す</b>。ただし結果は別枠 answer カードでなく <b>会話に inline カード</b>で出す(生の答＋[▸探索を見る][⭢ worker に渡す])。forward はそのカード上のアクションに。直接聞く速さを温存しつつ1レーン。</div>
+    <div class="l"><b>✓</b> <b>consult は明示のみ堅持</b>(現状維持・実装不変)。worker が自律で ChatGPT を呼ぶのは遅い/浪費/誤判断なので不可。fetch=自律・consult=明示の非対称は UI 変更でも動かさない。</div>
+  </div>
+
+  <h2><span>作る形(確定した設計)</span><span class="n">§2 / 実装仕様</span></h2>
+  <div class="map">
+    <div class="mrow"><div class="rk">①</div>
+      <div class="mt"><b>単一レーン = ChatGPT 風 agent 会話</b>
+        <div class="rec">worker との1会話。あなたの発言 → status pill(考え中/env.py を読み中/ChatGPTに質問中 Ns) → worker の回答。tool 呼び出しは会話内の折り畳みカード。</div></div>
+      <div class="barwrap"><div class="track"><div class="fill" style="width:100%"></div></div><span class="pct">✓</span></div></div>
+    <div class="mrow"><div class="rk">②</div>
+      <div class="mt"><b>fetch カード = 「🔍 読んだ物 ▸」</b>
+        <div class="rec">worker が自律で repo を読んだら会話に1カード。既定は畳む、展開で READ/GREP した対象＋バイト数。</div></div>
+      <div class="barwrap"><div class="track"><div class="fill" style="width:100%"></div></div><span class="pct">✓</span></div></div>
+    <div class="mrow"><div class="rk">③</div>
+      <div class="mt"><b>consult カード = 「🔍 ChatGPT に質問 ▸」</b>
+        <div class="rec">worker 経由でも ask reader ▶ 直接でも、会話に1カード。畳んでいる間「質問中 Ns」、展開で live mirror(今どのファイル)＋[⭢ worker に渡す]。</div></div>
+      <div class="barwrap"><div class="track"><div class="fill" style="width:100%"></div></div><span class="pct">✓</span></div></div>
+    <div class="mrow"><div class="rk">④</div>
+      <div class="mt"><b>入力 = textarea＋2ボタン(send / ask reader ▶)</b>
+        <div class="rec">explore は既に廃止済み。カード粒度(1呼び=1カード)は実装時の私の裁量。</div></div>
+      <div class="barwrap"><div class="track"><div class="fill" style="width:100%"></div></div><span class="pct">✓</span></div></div>
+  </div>
+
+  <h2><span>刺してほしい(残る低確信)</span><span class="n">§3 / 実装前の最後の盲点</span></h2>
+  <div class="strike">
+    ↓ <b>①</b> 「展開カードで観測温存」まで作り込むと <b>3レーンの複雑さが1レーンに凝縮されるだけ</b>で、あなたが本当に欲しい「familiar でシンプル」から外れるリスク。対策 = まず既定(畳んだ)状態を綺麗に作り、展開は最小装飾で。もし作ってみて重かったら (B)→pure status に落とすのは1レーン内で安く可能。
+    <b>②</b> 私は既存の左ミラー描画(renderMirror)を consult カードに移植できる前提。もし mirror イベントの粒度が live 表示に足りなければ、そこだけ微修正が要る(サーバ不変の前提が崩れる唯一の点) ── 実装で最初に確かめる。
+  </div>
+
+  <h2><span>終端の号令(あなた)</span><span class="n">§4</span></h2>
+  <div class="fork">
+    <div class="f"><div class="q">この形で作ってよいか?</div>
+      <div class="opt">推し = <span class="mine">作る</span>。両フォーク解決済み・ほぼ index.html だけ・可逆。build の号令が出たら §5 のブリーフィングを narrative/ に凍結して着手。</div></div>
+  </div>
+</main>
+<footer>
+  決定のための生きた資料。清書していない ── 重み付けの歪みが見えるのは意図的。目的=出戻り最小化。この分岐が解け+終端の号令で引退し narrative へ凍結。file:// で開ける単一 HTML。
+</footer>
+</body>
+</html>

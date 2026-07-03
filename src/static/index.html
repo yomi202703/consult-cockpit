@@ -2,209 +2,225 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>consult cockpit — worker × reader</title>
+<title>consult cockpit</title>
 <style>
   :root{
-    --bg:#eef0f3; --panel:#ffffff; --edge:#e0e3e8; --ink:#1c2126;
+    --bg:#f4f5f7; --panel:#ffffff; --edge:#e0e3e8; --ink:#1c2126;
     --dim:#6b7280; --star:#c2680c; --worker:#0a7d55; --reader:#1f6feb; --user:#7c3aed;
   }
   *{box-sizing:border-box}
   html,body{height:100%}
-  body{margin:0;font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;
-       background:var(--bg);color:var(--ink);height:100vh;overflow:hidden;display:flex;flex-direction:column}
-  header{display:flex;align-items:center;gap:12px;padding:8px 14px;flex:0 0 auto;
-         border-bottom:1px solid var(--edge);background:var(--panel)}
-  header b{font-weight:700;letter-spacing:.2px}
-  header .sub{color:var(--dim)}
-  #status{margin-left:auto;font-size:12px;color:var(--dim)}
+  body{margin:0;font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--ink);
+       background:var(--bg);display:flex;flex-direction:column;height:100vh;overflow:hidden}
+
+  header{display:flex;align-items:center;gap:10px;padding:8px 16px;background:var(--panel);
+         border-bottom:1px solid var(--edge);flex:0 0 auto}
+  header b{font-size:14px}
+  header .sub{color:var(--dim);font-size:11px}
+  header .lbl{color:var(--dim);font-size:11px;margin-left:auto}
+  #repo{width:280px;border:1px solid var(--edge);border-radius:6px;padding:3px 8px;
+        font:inherit;font-size:11px;background:#fff}
+  #status{color:var(--dim);font-size:11px;white-space:nowrap}
   #status .dot{display:inline-block;width:8px;height:8px;border-radius:50%;
-               background:#c2c7cf;margin-right:5px;vertical-align:middle}
-  #status.ok .dot{background:var(--worker)} #status.bad .dot{background:#d1453b}
-  .grid{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:1fr 1fr 1fr}
-  .lane{display:flex;flex-direction:column;min-width:0;min-height:0;
-        border-right:1px solid var(--edge);background:var(--panel)}
-  .lane:last-child{border-right:none}
-  .lane h2{margin:0;padding:8px 12px;font-size:11px;font-weight:700;flex:0 0 auto;
-           border-bottom:1px solid var(--edge);color:var(--dim);
-           text-transform:uppercase;letter-spacing:.7px}
-  .lane.reader h2{color:var(--reader)} .lane.star h2{color:var(--star)} .lane.worker h2{color:var(--worker)}
-  .lane h2 small{float:right;color:var(--dim);font-weight:400;text-transform:none;letter-spacing:0}
-  .body{flex:1 1 auto;min-height:0;overflow-y:auto;padding:10px 12px}
-  .turn{margin:0 0 14px}
-  .turn .role{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px;font-weight:700}
-  .turn.user .role{color:var(--user)}
-  .turn.assistant .role{color:var(--reader)}
+               background:#c2c7cf;margin-right:5px;vertical-align:-1px}
+  #status.ok .dot{background:var(--worker)}
+  #status.bad .dot{background:#d1453b}
+
+  /* ---- the one lane ---- */
+  #chat{flex:1 1 auto;min-height:0;overflow-y:auto;padding:18px 16px 8px}
+  #chat .inner{max-width:820px;margin:0 auto}
+
+  .turn{margin:0 0 16px}
+  .turn.user{display:flex;justify-content:flex-end}
+  .turn.user pre{background:#ede9fe;border:1px solid #ddd3fb;border-radius:12px 12px 3px 12px;
+                 padding:8px 12px;max-width:85%}
+  .turn.assistant pre{padding:0 2px}
   .turn pre{margin:0;white-space:pre-wrap;word-break:break-word;font:inherit}
-  .turn.toolline{margin-bottom:8px}
-  .turn.toolline .role{display:none}
-  .turn.toolline pre{font-size:11px;color:var(--dim);border-left:2px solid var(--worker);padding-left:7px}
-  .turn.toolline pre::before{content:'🔧 '}
-  .turn details summary{cursor:pointer;color:var(--dim);list-style:none}
-  .turn details summary::before{content:'▸ ';color:var(--dim)}
-  .turn details[open] summary::before{content:'▾ '}
-  .turn details summary:hover{color:var(--ink)}
-  /* middle lane = fetch traffic (the star) */
-  .ev{padding:6px 9px;margin:0 0 6px;border-left:3px solid var(--edge);background:#f7f8fa;border-radius:0 4px 4px 0}
-  .ev.fetch{border-left-color:var(--star);background:#fdf6ee}
-  .ev.fetch.worker{border-left-color:var(--worker);background:#f0faf5}
-  .ev.fetch.worker code{color:var(--worker)}
-  .ev.served{border-left-color:#c2c7cf;color:var(--dim)}
-  .ev.consult,.ev.explore{border-left-color:var(--reader);color:var(--dim)}
-  .ev.explore{border-left-color:var(--worker)}
-  .ev .rnd{color:var(--dim);font-size:11px}
-  .ev .ts{float:right;color:#a9afba;font-size:10px}
-  .ev .who{font-weight:700;font-size:10px;padding:0 5px;border-radius:3px;margin-right:5px}
-  .ev .who.reader{color:var(--reader);background:#e8f0fe}
-  .ev .who.worker{color:var(--worker);background:#e6f6ee}
-  .ev code{color:var(--star);word-break:break-word;font-weight:600}
-  /* the answer card: the artifact, not a count */
-  .card{border:1px solid var(--worker);border-radius:6px;margin:0 0 8px;background:#f0faf5;overflow:hidden}
-  .card .bar{display:flex;align-items:center;gap:8px;padding:6px 9px;border-bottom:1px dashed var(--edge)}
-  .card .bar .t{font-weight:700;color:var(--worker);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
-  .card .bar button{margin-left:auto;background:#fff;border:1px solid var(--star);color:var(--star);
-    border-radius:5px;padding:2px 10px;cursor:pointer;font:inherit;font-weight:600}
-  .card .bar button:hover{background:#fbf0e2}
-  .card .bar button:disabled{opacity:.45;cursor:default}
-  .card pre{margin:0;padding:8px 10px;white-space:pre-wrap;word-break:break-word;font:inherit;
-            max-height:220px;overflow-y:auto}
-  .foot{border-top:1px solid var(--edge);padding:8px;background:var(--panel);display:flex;gap:6px;flex:0 0 auto;align-items:flex-end}
-  .foot.col{flex-direction:column;align-items:stretch}
-  .btnrow{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
-  .foot button.ask{border-color:var(--reader);color:var(--reader)}
-  .foot button.ask:hover:not(:disabled){background:#e8f0fe}
-  .foot input,.foot textarea{flex:1;min-width:0;background:#fff;border:1px solid var(--edge);
-    color:var(--ink);border-radius:6px;padding:7px 9px;font:inherit;resize:none}
-  .foot input:focus,.foot textarea:focus{outline:none;border-color:var(--reader)}
-  .foot button{background:#f3f4f6;border:1px solid var(--edge);color:var(--ink);
-    border-radius:6px;padding:7px 13px;cursor:pointer;font:inherit;font-weight:600;white-space:nowrap}
-  .foot button:hover{background:#e9ebee}
-  .foot button:disabled{opacity:.45;cursor:default}
-  .foot button.go{border-color:var(--worker);color:var(--worker)}
-  .foot button.go:hover:not(:disabled){background:#e8f6ef}
-  .repo-row{display:flex;gap:6px;padding:8px 8px 0;background:var(--panel);flex:0 0 auto}
-  .repo-row input{flex:1;min-width:0;background:#fff;border:1px solid var(--edge);color:var(--ink);
-    border-radius:6px;padding:5px 9px;font:12px/1.4 inherit}
-  .repo-row .lbl{color:var(--dim);font-size:11px;align-self:center;flex:0 0 auto}
-  .invariant{color:var(--dim);font-size:10px;padding:5px 12px;border-top:1px dashed var(--edge);flex:0 0 auto}
+  .sys{color:#a03d33;font-size:11.5px;margin:0 0 14px;padding-left:8px;border-left:2px solid #d1453b}
+
+  /* ---- tool cards (fetch / consult) ---- */
+  .tool{margin:0 0 16px;border:1px solid var(--edge);border-radius:10px;background:var(--panel);
+        overflow:hidden;font-size:12px}
+  .tool summary{cursor:pointer;list-style:none;padding:7px 12px;color:var(--dim);user-select:none}
+  .tool summary::-webkit-details-marker{display:none}
+  .tool summary::before{content:'▸ '}
+  .tool[open] summary::before{content:'▾ '}
+  .tool summary:hover{color:var(--ink)}
+  .tool.consult{border-left:3px solid var(--reader)}
+  .tool.fetch{border-left:3px solid var(--worker)}
+  .tool .tbody{border-top:1px dashed var(--edge);padding:8px 12px;max-height:340px;overflow-y:auto}
+  .tool .act{color:var(--dim);font-size:11px;padding:2px 0}
+  .tool .act code{color:var(--star);word-break:break-all}
+  /* reader turns inside an expanded consult card */
+  .tool .rturn{margin:8px 0}
+  .tool .rturn .rrole{font-size:10px;text-transform:uppercase;letter-spacing:.5px;
+                      font-weight:700;margin-bottom:2px}
+  .tool .rturn.user .rrole{color:var(--user)}
+  .tool .rturn.assistant .rrole{color:var(--reader)}
+  .tool .rturn pre{margin:0;white-space:pre-wrap;word-break:break-word;font:inherit;font-size:11.5px}
+  .tool .rturn details summary{cursor:pointer;color:var(--dim);list-style:none;padding:0}
+  .tool .rturn details summary::before{content:'▸ '}
+  .tool .rturn details[open] summary::before{content:'▾ '}
+
+  /* direct-consult answer card */
+  .rawans{margin:0 0 16px;border:1px solid #cfe0fb;border-left:3px solid var(--reader);
+          border-radius:10px;background:#f5f9ff;overflow:hidden}
+  .rawans .bar{display:flex;align-items:center;padding:6px 12px;border-bottom:1px dashed #cfe0fb}
+  .rawans .bar .t{font-size:11px;font-weight:700;color:var(--reader);text-transform:uppercase}
+  .rawans .bar button{margin-left:auto;font:inherit;font-size:11px;padding:2px 10px;
+                      border:1px solid var(--worker);color:var(--worker);background:#fff;
+                      border-radius:6px;cursor:pointer}
+  .rawans .bar button:hover:not(:disabled){background:#e6f6ee}
+  .rawans .bar button:disabled{opacity:.55;cursor:default}
+  .rawans pre{margin:0;padding:8px 12px;white-space:pre-wrap;word-break:break-word;
+              font:inherit;font-size:12px;max-height:260px;overflow-y:auto}
+
+  /* ---- status pill + input ---- */
+  .footwrap{flex:0 0 auto;background:var(--panel);border-top:1px solid var(--edge)}
+  .footinner{max-width:820px;margin:0 auto;padding:8px 16px 12px}
+  #pill{font-size:11.5px;color:var(--dim);min-height:18px;padding:0 2px 4px}
+  #pill:empty{padding:0}
+  #pill .spin{display:inline-block;width:9px;height:9px;border:2px solid #c9cdd4;
+              border-top-color:var(--reader);border-radius:50%;margin-right:6px;
+              vertical-align:-1px;animation:sp .8s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .inrow{display:flex;gap:8px;align-items:flex-end}
+  #w{flex:1;min-width:0;border:1px solid var(--edge);border-radius:10px;padding:8px 12px;
+     font:inherit;resize:none;background:#fff;max-height:120px}
+  #w:focus{outline:none;border-color:var(--reader)}
+  .inrow button{font:inherit;font-size:12px;padding:8px 14px;border-radius:10px;cursor:pointer;
+                background:#fff;border:1px solid var(--edge);color:var(--ink);white-space:nowrap}
+  .inrow button:hover:not(:disabled){background:#f2f4f6}
+  .inrow button:disabled{opacity:.5;cursor:default}
+  .inrow button.ask{border-color:var(--reader);color:var(--reader)}
+  .inrow button.ask:hover:not(:disabled){background:#e8f0fe}
+  .inrow button.go{border-color:var(--worker);color:var(--worker);font-weight:700}
+  .inrow button.go:hover:not(:disabled){background:#e6f6ee}
+  .hint{color:#a9afba;font-size:10px;padding:4px 2px 0}
 </style>
 </head>
 <body>
+
 <header>
   <b>consult cockpit</b>
-  <span class="sub">worker に話す — 「ChatGPTに聞いて」で reader が repo を読む</span>
-  <span class="lbl" style="color:var(--dim);font-size:11px">repo</span>
-  <input id="repo" value="." spellcheck="false" title="consult / explore の対象 repo"
-         style="flex:1;min-width:120px;max-width:460px;background:#fff;border:1px solid var(--edge);border-radius:6px;padding:4px 9px;font:12px/1.4 inherit;color:var(--ink)">
+  <span class="sub" id="wlabel">worker</span>
+  <span class="lbl">repo</span>
+  <input id="repo" value="." spellcheck="false" title="worker / reader が読む対象 repo">
   <span id="status" class="bad"><span class="dot"></span>reader: …</span>
 </header>
 
-<div class="grid">
-  <!-- LEFT: reader mirror (observation only — the human talks to the worker) -->
-  <section class="lane reader">
-    <h2>reader <small id="rlabel">…</small></h2>
-    <div class="body" id="mirror"></div>
-  </section>
+<div id="chat"><div class="inner" id="feed"></div></div>
 
-  <!-- MIDDLE: fetch traffic (star) -->
-  <section class="lane star">
-    <h2>fetch traffic <small>今どのファイルを読んでいるか</small></h2>
-    <div class="body" id="traffic"></div>
-    <div class="invariant">repo 本文はこのレーンと reader にしか出ない。worker の context には入らない。</div>
-  </section>
-
-  <!-- RIGHT: worker chat -->
-  <section class="lane worker">
-    <h2>worker <small id="wstate">idle</small></h2>
-    <div class="body" id="worker"></div>
-    <div class="foot col">
-      <textarea id="w" rows="1" placeholder="worker に話す… 必要なら自分で repo を読む (Enter=send / Shift+Enter=改行)"></textarea>
-      <div class="btnrow">
-        <button class="ask" id="askBtn" onclick="askReader()"
-          title="↑の入力を質問として reader(強いモデル)に repo を読ませて聞く">ask reader ▶</button>
-        <button class="go" id="sendBtn" onclick="wsend()">send</button>
-      </div>
+<div class="footwrap">
+  <div class="footinner">
+    <div id="pill"></div>
+    <div class="inrow">
+      <textarea id="w" rows="1"
+        placeholder="worker に話す… 必要なら自分で repo を読む (Enter=send / Shift+Enter=改行)"></textarea>
+      <button class="ask" id="askBtn" onclick="askReader()"
+        title="入力を質問として reader(強いモデル)に repo を読ませて直接聞く">ask reader ▶</button>
+      <button class="go" id="sendBtn" onclick="wsend()">send</button>
     </div>
-  </section>
+    <div class="hint">repo 本文は worker の会話履歴に入らない — 読みは使い捨て context のみ(このツールの不変条件)</div>
+  </div>
 </div>
 
 <script>
 const $ = id => document.getElementById(id);
-const esc = s => (s||'').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-const ts = () => new Date().toTimeString().slice(0,8);
-function atBottom(el){return el.scrollHeight - el.scrollTop - el.clientHeight < 40;}
-function scroll(el){el.scrollTop = el.scrollHeight;}
-function autogrow(el){el.style.height='auto';el.style.height=Math.min(el.scrollHeight,120)+'px';}
-$('w').addEventListener('input',e=>autogrow(e.target));
+const esc = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const chatEl = $('chat'), feed = $('feed');
+const atBottom = () => chatEl.scrollHeight - chatEl.scrollTop - chatEl.clientHeight < 60;
+const scrollDown = () => { chatEl.scrollTop = chatEl.scrollHeight; };
+function autogrow(el){ el.style.height='auto'; el.style.height=Math.min(el.scrollHeight,120)+'px'; }
+$('w').addEventListener('input', e=>autogrow(e.target));
 
-// ---- busy state drives the buttons (no dead 40s) ----
+// ---- busy state ----
 let workerBusy=false, consultBusy=false;
 function paintButtons(){
-  $('sendBtn').disabled=workerBusy;
-  const a=$('askBtn'); a.disabled=consultBusy; a.textContent=consultBusy?'reader…':'ask reader ▶';
+  $('sendBtn').disabled = workerBusy;
+  const a=$('askBtn'); a.disabled = consultBusy;
+}
+function pill(html){ const stick=atBottom(); $('pill').innerHTML = html||''; if(stick) scrollDown(); }
+const spin = t => `<span class="spin"></span>${esc(t)}`;
+
+// ---- conversation primitives ----
+let wCur=null;                     // streaming assistant <pre>
+function turn(role, text){
+  const stick=atBottom();
+  const d=document.createElement('div'); d.className='turn '+(role==='user'?'user':'assistant');
+  const p=document.createElement('pre'); p.textContent=text||''; d.appendChild(p);
+  feed.appendChild(d); if(stick) scrollDown(); return p;
+}
+function sysline(text){
+  const stick=atBottom();
+  const d=document.createElement('div'); d.className='sys'; d.textContent=text;
+  feed.appendChild(d); if(stick) scrollDown();
 }
 
-// ---- left: reader mirror. Long turns (the brief) collapse to a summary ----
-let mirrorSig = '';
-function turnHTML(t){
-  const role=t.role==='user'?'user':'assistant';
+// ---- tool cards ----
+// fetch card: the worker read the repo itself (one card per tool round)
+let fetchCard=null;                // {body} while a worker fetch round is in flight
+function openFetchCard(summary){
+  const stick=atBottom();
+  const det=document.createElement('details'); det.className='tool fetch';
+  det.innerHTML=`<summary>🔧 ${esc(summary)}</summary><div class="tbody"></div>`;
+  feed.appendChild(det); if(stick) scrollDown();
+  fetchCard={body:det.querySelector('.tbody')};
+}
+// consult card: the reader (ChatGPT) studies the repo — expandable live mirror
+let consult=null;                  // {det,sum,body,mirror,direct,baseTitle}
+let consultOrigin='direct';        // set to 'worker' by a toolcall right before consult:start
+function openConsultCard(){
+  const stick=atBottom();
+  const det=document.createElement('details'); det.className='tool consult';
+  det.innerHTML=`<summary>🔍 ChatGPT に質問中…</summary>
+    <div class="tbody"><div class="acts"></div><div class="mir"></div></div>`;
+  feed.appendChild(det); if(stick) scrollDown();
+  consult={det, sum:det.querySelector('summary'), body:det.querySelector('.acts'),
+           mirror:det.querySelector('.mir'), direct:consultOrigin==='direct', sig:''};
+  consultOrigin='direct';
+}
+function consultAct(html){
+  if(!consult) return;
+  const d=document.createElement('div'); d.className='act'; d.innerHTML=html;
+  consult.body.appendChild(d);
+}
+// reader turns inside the consult card (folded if long)
+function rturnHTML(t){
+  const role = t.role==='user' ? 'user' : 'assistant';
   const body = t.text||'';
   let inner;
   if(body.length>500){
-    const head=esc(body.split('\n')[0].slice(0,90));
-    inner=`<details><summary>${head}… (${body.length} chars)</summary><pre>${esc(body)}</pre></details>`;
-  }else{
-    inner=`<pre>${esc(body)}</pre>`;
-  }
-  return `<div class="turn ${role}"><div class="role">${esc(t.role)}</div>${inner}</div>`;
+    const first = esc(body.split('\n')[0].slice(0,90));
+    inner = `<details><summary>${first}… (${body.length} chars)</summary><pre>${esc(body)}</pre></details>`;
+  } else inner = `<pre>${esc(body)}</pre>`;
+  return `<div class="rturn ${role}"><div class="rrole">${esc(t.role)}</div>${inner}</div>`;
 }
-function renderMirror(turns){
-  const sig = JSON.stringify(turns||[]);
-  if(sig === mirrorSig) return;            // no change → no repaint (kills カチカチ)
-  mirrorSig = sig;
-  const el = $('mirror'); const stick = atBottom(el);
-  const open = new Set([...el.querySelectorAll('details[open]')].map((d,i)=>i)); // keep opened ones
-  el.innerHTML = (turns||[]).map(turnHTML).join('');
-  [...el.querySelectorAll('details')].forEach((d,i)=>{ if(open.has(i)) d.open=true; });
-  if(stick) scroll(el);
+function renderConsultMirror(turns){
+  if(!consult) return;
+  const sig=JSON.stringify(turns||[]); if(sig===consult.sig) return;
+  consult.sig=sig;
+  const open=new Set([...consult.mirror.querySelectorAll('details')]
+                     .map((d,i)=>d.open?i:-1).filter(i=>i>=0));
+  consult.mirror.innerHTML=(turns||[]).map(rturnHTML).join('');
+  [...consult.mirror.querySelectorAll('details')].forEach((d,i)=>{ if(open.has(i)) d.open=true; });
+  if(consult.det.open) consult.mirror.scrollIntoView({block:'nearest'});
 }
+// direct-consult raw answer card, with hand-to-worker action
+function rawAnswerCard(text){
+  const stick=atBottom();
+  const d=document.createElement('div'); d.className='rawans';
+  d.innerHTML=`<div class="bar"><span class="t">ChatGPT の回答</span>
+    <button onclick="forward(this)">⇥ worker に渡す</button></div>
+    <pre>${esc(text)}</pre>`;
+  feed.appendChild(d); if(stick) scrollDown();
+}
+function forward(btn){ btn.disabled=true; btn.textContent='渡した ✓'; post('/forward',{}); }
 
-// ---- middle: fetch traffic ----
-function traffic(html, cls){
-  const el = $('traffic'); const stick = atBottom(el);
-  const d = document.createElement('div'); d.className = 'ev '+cls;
-  d.innerHTML = `<span class="ts">${ts()}</span>`+html;
-  el.appendChild(d); if(stick) scroll(el);
-}
-// the answer itself lands here as a card, forward inline (no hunt in the mirror)
-function answerCard(text, note){
-  const el = $('traffic'); const stick = atBottom(el);
-  const d = document.createElement('div'); d.className='card';
-  d.innerHTML = `<div class="bar"><span class="t">answer${note?' · '+esc(note):''}</span>`+
-    `<button onclick="forward(this)">forward ⇥ worker</button></div>`+
-    `<pre>${esc(text)}</pre>`;
-  el.appendChild(d); if(stick) scroll(el);
-}
-
-// ---- right: worker chat ----
-let wCur = null;
-function wTurn(role, text){
-  const el = $('worker');
-  const d = document.createElement('div'); d.className = 'turn '+(role==='user'?'user':'assistant');
-  d.innerHTML = `<div class="role">${esc(role)}</div><pre>${esc(text||'')}</pre>`;
-  el.appendChild(d); scroll(el); return d.querySelector('pre');
-}
-
-// lane labels from live config
+// ---- lane labels from live config ----
 fetch('/state').then(r=>r.json()).then(s=>{
   if(s.default_repo) $('repo').value = s.default_repo;
-  const w = $('worker').closest('.lane').querySelector('h2');
-  if(s.worker_model) w.childNodes[0].textContent = 'worker — '+s.worker_model+' ';
-  $('rlabel').textContent = s.reader_mode==='disabled' ? 'disabled'
-    : s.reader_mode==='api' ? (s.reader_model||'API')+' (API)'
-    : 'ChatGPT (web) 本物タブのミラー';
-  if(s.worker_model) document.title = `consult cockpit — ${s.worker_model} × reader`;
-  if(s.last_answer) answerCard(s.last_answer, '前回');   // reload keeps the forward path
+  if(s.worker_model){ $('wlabel').textContent = s.worker_model; document.title = 'cockpit — '+s.worker_model; }
 }).catch(()=>{});
 
 // ---- SSE ----
@@ -213,61 +229,86 @@ ev.onmessage = e => {
   let m; try{ m = JSON.parse(e.data); }catch(_){ return; }
   switch(m.event){
     case 'status': {
-      const s = $('status'); const ok = m.reader==='connected'||m.reader==='api';
-      s.className = ok?'ok':'bad';
-      s.innerHTML = `<span class="dot"></span>reader: ${esc(m.reader)}`+(m.detail?` — ${esc(m.detail).slice(0,60)}`:'');
+      const ok = m.reader==='connected'||m.reader==='api';
+      $('status').className = ok?'ok':'bad';
+      $('status').innerHTML = `<span class="dot"></span>reader: ${esc(m.reader)}`+
+                              (m.detail?` · ${esc((m.detail+'').slice(0,60))}`:'');
       break; }
-    case 'mirror': renderMirror(m.turns); break;
+    case 'mirror': renderConsultMirror(m.turns); break;   // only lands in an open consult card
     case 'consult':
-      if(m.status==='start') { consultBusy=true; paintButtons(); }
-      if(m.status==='done'||m.status==='error') { consultBusy=false; paintButtons(); }
-      if(m.status==='waiting'){ $('askBtn').textContent=`reader… ${m.secs}s`;
-        if(workerBusy) $('wstate').textContent=`reader 考え中… ${m.secs}s`; break; }
-      traffic(`<span class="rnd">consult</span> ${esc(m.status)}${m.repo?' · '+esc(m.repo):''}${m.detail?' · '+esc(m.detail):''}`, 'consult');
+      switch(m.status){
+        case 'start': consultBusy=true; paintButtons(); openConsultCard(); break;
+        case 'briefed': consultAct('repo の説明と質問を送った'); break;
+        case 'waiting':
+          if(consult) consult.sum.textContent = `🔍 ChatGPT に質問中… ${m.secs}s`;
+          pill(spin(`ChatGPT に質問中… ${m.secs}s`)); break;
+        case 'done':
+          consultBusy=false; paintButtons();
+          if(consult){ consult.sum.textContent='🔍 ChatGPT に質問した'; consult=null; }
+          if(!workerBusy) pill('');
+          break;
+        case 'error':
+          consultBusy=false; paintButtons();
+          if(consult){ consult.sum.textContent='🔍 ChatGPT への質問が失敗'; consult=null; }
+          sysline('consult error: '+(m.detail||''));
+          if(!workerBusy) pill('');
+          break;
+      }
       break;
-    case 'explore':
-      traffic(`<span class="rnd">worker explore</span> ${esc(m.status)}${m.repo?' · '+esc(m.repo):''}`, 'explore');
+    case 'fetch':
+      if(m.who==='worker'){
+        if(fetchCard) fetchCard.body.insertAdjacentHTML('beforeend',
+          `<div class="act">round ${m.round} · <code>${esc(m.names)}</code></div>`);
+      } else {
+        consultAct(`round ${m.round} · ChatGPT が読む: <code>${esc(m.names)}</code>`);
+        if(consult) consult.sum.textContent = `🔍 ChatGPT が repo を読んでいる… round ${m.round}`;
+      }
       break;
-    case 'fetch': {
-      const who = m.who||'reader';
-      if(who==='reader' && workerBusy){ $('wstate').textContent = `reader reading… round ${m.round}`; }
-      traffic(`<span class="who ${who}">${who}</span><span class="rnd">round ${m.round} · fetch</span><br><code>${esc(m.names)}</code>`, 'fetch '+who);
-      break; }
-    case 'served': {
-      const who = m.who||'reader';
-      const dest = who==='worker' ? 'worker(一時context)' : 'reader';
-      traffic(`<span class="who ${who}">${who}</span><span class="rnd">round ${m.round}</span> 配膳 ${m.bytes} bytes → ${dest}`, 'served');
-      break; }
-    case 'answer': answerCard(m.text||'', m.note); break;
+    case 'served':
+      if(m.who==='worker'){
+        if(fetchCard) fetchCard.body.insertAdjacentHTML('beforeend',
+          `<div class="act">→ ${m.bytes} bytes を一時 context に配膳</div>`);
+      } else consultAct(`→ ${m.bytes} bytes 配膳`);
+      break;
+    case 'answer':
+      // 'answer' fires before consult:done, so the card is still live here.
+      // direct consult (ask reader ▶): show the raw answer with a hand-off action.
+      // worker-mediated consult: skip — the worker's synthesis streams next.
+      if(consult && consult.direct) rawAnswerCard(m.text||'');
+      break;
+    case 'explore': break;   // programmatic /worker-explore — no UI surface
     case 'worker': onWorker(m); break;
   }
 };
 
 function onWorker(m){
   switch(m.status){
-    case 'history': case 'msg': wTurn(m.role, m.content);
-      if(m.status==='msg'){ workerBusy=false; $('wstate').textContent='idle'; paintButtons(); } break;
+    case 'history': case 'msg':
+      turn(m.role, m.content);
+      if(m.status==='msg'){ workerBusy=false; pill(''); paintButtons(); } break;
     case 'start':
-      wTurn(m.role||'user', m.content);
-      workerBusy=true; $('wstate').textContent='thinking…'; paintButtons(); break;
+      turn(m.role||'user', m.content);
+      workerBusy=true; pill(spin('考え中…')); paintButtons(); break;
     case 'forwarded':
-      wCur=null; wTurn(m.role||'user', m.content);
-      if(!workerBusy) $('wstate').textContent='idle';
+      wCur=null; turn(m.role||'user', m.content);
+      if(!workerBusy) pill('');
       paintButtons(); break;
-    case 'consulting':
-      wCur=null; $('wstate').textContent='consulting reader…'; break;
-    case 'exploring': workerBusy=true; $('wstate').textContent = `exploring… round ${m.round}`; paintButtons(); break;
     case 'toolcall':
-      if(wCur){ wCur.textContent = m.summary; const t=wCur.closest('.turn'); if(t) t.classList.add('toolline'); }
+      // collapse the streamed tool block into a card
+      if(wCur){ const t=wCur.closest('.turn'); if(t) t.remove(); }
       wCur=null;
-      $('wstate').textContent = m.kind==='fetch' ? 'repo を読み中…' : 'consulting reader…'; break;
+      if(m.kind==='fetch'){ openFetchCard(m.summary||'repo を読んだ'); pill(spin('repo を読み中…')); }
+      else { consultOrigin='worker'; pill(spin('ChatGPT に質問中…')); }
+      break;
+    case 'consulting': wCur=null; consultOrigin='worker'; pill(spin('ChatGPT に質問中…')); break;
+    case 'exploring': workerBusy=true; pill(spin(`repo を探索中… round ${m.round}`)); paintButtons(); break;
     case 'delta':
-      if(!wCur) wCur = wTurn('assistant','');
-      wCur.textContent += m.content; scroll($('worker')); break;
-    case 'done': wCur=null; workerBusy=false; $('wstate').textContent='idle'; paintButtons(); break;
-    case 'busy': $('wstate').textContent = 'busy — 前の応答を待って'; break;
-    case 'error': wCur=null; workerBusy=false; paintButtons();
-      $('wstate').textContent = 'error'; traffic('worker error: '+esc(m.detail),'served'); break;
+      if(!wCur){ wCur = turn('assistant',''); fetchCard=null; }
+      wCur.textContent += m.content; if(atBottom()) scrollDown(); break;
+    case 'done': wCur=null; fetchCard=null; workerBusy=false; pill(''); paintButtons(); break;
+    case 'busy': pill('busy — 前の応答を待って'); break;
+    case 'error': wCur=null; fetchCard=null; workerBusy=false; paintButtons();
+      pill(''); sysline('worker error: '+(m.detail||'')); break;
   }
 }
 
@@ -282,17 +323,17 @@ function wsend(){
 }
 function askReader(){
   const question = $('w').value.trim(); if(!question||consultBusy) return;
-  consultBusy=true; paintButtons();
+  consultOrigin='direct';
+  turn('user', question+'  (→ reader に直接)');
   post('/consult', {repo:$('repo').value.trim(), question}).then(r=>{
     if(r&&r.error){ consultBusy=false; paintButtons();
-      traffic('consult error: '+esc(r.error)+(r.detail?' — '+esc(r.detail):''),'served'); }
+      sysline('consult error: '+r.error+(r.detail?' — '+r.detail:'')); }
   });
   $('w').value=''; autogrow($('w'));
 }
-function forward(btn){ if(btn){btn.disabled=true; btn.textContent='forwarded ✓';} post('/forward', {}); }
-
-// keyboard: Enter fires, Shift+Enter = newline
-$('w').addEventListener('keydown', e=>{ if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();wsend();} });
+$('w').addEventListener('keydown', e=>{
+  if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); wsend(); }
+});
 </script>
 </body>
 </html>

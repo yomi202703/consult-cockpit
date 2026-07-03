@@ -2,6 +2,36 @@
 
 過去エントリは書き換えない。
 
+## 2026-07-03 3レーン → 単一エージェント会話 UI（＋consult 中 live mirror）
+
+- オーナー発案「3分割要らなくない？1で十分。ChatGPT のような agent 対話形式にして、
+  思考中/ChatGPTに質問中/repo探索中を出す方がわかりやすい」。/grill-me で設計決着
+  (briefing は narrative/decision-collapse-lanes.html に凍結):
+  - 観測(誰がどのファイルを読むか)は捨てず会話に折り畳んで残す(「検索しました ▸」式)。
+    完全に捨てる案(B)・2レーン案(C)は却下 — offload が「見える」のがこのツールの identity。
+  - consult カードは実行中に展開すると live mirror(旧・左レーンをカード内に降格)。
+  - ask reader ▶ は残すが結果は inline カード＋[⇥ worker に渡す](別枠 answer/forward 廃止)。
+  - status は具体段階＋経過秒(toolcall.summary / waiting.secs を利用)。曖昧な「考えて
+    います…」にしない。
+  - consult 明示のみ・fetch 自律の非対称は不変。
+- 実装: index.html 全面書き換え(1カラム max-width 820px、user=右バブル/assistant=平文、
+  🔧 fetch カード・🔍 consult カード・rawans カード・status pill)。サーバ変更は1点のみ:
+  consult 実行中に mirror が止まる穴(controller が wait_complete 内でブロック、idle tick
+  停止)を、vendored scrape/nav.py の wait_complete に on_poll callback(既定 None、
+  get_state 直後に呼ぶ)を追加して塞いだ。_wait_with_heartbeat の beat() スレッドは削除
+  (polling ~2s に waiting{secs} と MIRROR_JS 評価を畳んだ — callback は渡された ws を
+  使う。self.ws は reload_recover 後 stale、_emit_mirror はエラー時 self.ws=None にして
+  recovery と喧嘩するため不使用)。
+- 方式選定の根拠(Plan agent 検証): cdp.py の WS.cmd はスレッド非安全(id 不一致応答を
+  黙って捨てる＋_buf 共有破壊)なので mirror 発行は必ず controller スレッド上。server 側に
+  polling を複製する案は wait_complete の stall recovery(empty>=12→reload_recover)を
+  複製して drift するため却下。callback は upstream(chatgpt-web)にも還元できる形。
+- リロード仕様: worker 履歴(user turn＋最終回答)のみ復元。tool カードは再構築しない
+  (SSE に replay バッファが無い。カードはその場の観測、正本は履歴)。
+- 実機確認: consult 中 waiting{secs} と mirror{turns} が~2s毎に交互配信されるのを確認。
+- 教訓: UI の面数は「操作主体の数」に従う。操作主体が worker 1本に収束した時点で
+  3レーンは過去の構造の遺物だった。観測は面でなく「会話内の progressive disclosure」で残す。
+
 ## 2026-07-03 explore をボタンから外し worker の自律 fetch ツールに（＋ask reader ボタン）
 
 - オーナー指摘: 「gemma が操作するなら explore を UI に出す必要なくね？」。consult を

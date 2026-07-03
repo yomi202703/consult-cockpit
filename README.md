@@ -1,12 +1,15 @@
 # consult-cockpit
 
-worker × reader の3レーン観測コックピット。小 context の worker(今はローカル Gemma、
-任意の OpenAI 互換 API 可)が repo を自分の context に載せずに、reader(今は web
-ChatGPT)に「repo を読ませて」cross-file の問題を外注する ── その往復を1画面で可視化する。
+worker との単一エージェント会話 UI。小 context の worker(今はローカル Gemma、任意の
+OpenAI 互換 API 可)が repo を自分の履歴に載せずに扱う ── 必要なら自分で読み(fetch)、
+頼まれれば reader(今は web ChatGPT)に外注する(consult)。その「誰がどのファイルを
+読んだか」は会話内の折り畳みカードとして残る(ChatGPT の「検索しました ▸」式)。
 
-- 左 = reader ミラー(本物の signed-in ChatGPT タブを CDP で読む。無ければ disabled)
-- 中央 = fetch トラフィック(今どのファイルが読まれているか)= 主役
-- 右 = worker free-form チャット(streaming)
+- 会話 = worker との1本のチャット(streaming)。入力もここだけ。
+- 🔧 fetch カード = worker が自分で repo を読んだ痕跡(展開で対象とバイト数)
+- 🔍 consult カード = reader が repo を探索した痕跡(実行中に展開すると live で
+  「今どのファイルを読んでいるか」が見える)
+- status pill = 考え中… / repo を読み中… / ChatGPT に質問中… Ns(入力欄の上)
 
 ## 走らせる
 
@@ -39,21 +42,25 @@ bash ~/.claude/lib/consult-cockpit/run.sh
 # → http://127.0.0.1:8079
 ```
 
-使い方（入力は worker の1箇所だけ）:
-1. ヘッダーの repo 欄に対象 repo を入れ、右の worker に普通に話す。
+使い方（入力は1箇所だけ）:
+1. ヘッダーの repo 欄に対象 repo を入れ、普通に話す(Enter=send)。
 2. repo について聞けば、worker は必要なら自分で repo を読んでから答える
-   （中央に「repo を読む」fetch が流れる。安い・速い）。ボタンは要らない。
+   （🔧 カードが会話に残る。安い・速い）。ボタンは要らない。
 3. 強いモデルに読ませたい時は worker に頼む — 「ChatGPTに聞いて」「readerに投げて」。
-   worker が consult を発動し、左に reader の探索が映り、回答を踏まえて worker が答える。
-   直接聞くなら入力を書いて `ask reader ▶`（中央に answer カード → 任意で forward）。
+   worker が consult を発動(🔍 カード。実行中に展開すると reader の探索が live で見える)し、
+   回答を踏まえて worker が答える。
+   直接聞くなら入力を書いて `ask reader ▶` — 生の回答カードが会話に出て、
+   [⇥ worker に渡す] で worker の文脈に入れられる。
 
-左レーンは観測専用（人間は操作しない）。`POST /consult` は API としても残る。
+リロード時は worker の会話履歴(あなたの発言と最終回答)だけ復元される。tool カードは
+その場限りの観測で、正本は履歴のほう。`POST /consult` は API としても残る。
 
 ## 設計の肝(死守する不変条件)
 
-repo の本文は「中央レーン」と「左(reader タブ)」にしか出さない。worker の会話履歴には
-絶対に入れない。`/forward` が渡すのは reader の最終回答テキストのみ(上限8KB)。
-これで「repo は一度も worker の context に入らない」= 文脈オフロードを実装で保証する。
+repo の本文は worker の会話履歴に絶対に入れない。fetch も consult も各ツールラウンドは
+使い捨ての一時 context にだけ入り、履歴に残るのは user turn と最終回答のみ。
+`/forward` が渡すのは reader の最終回答テキストのみ(上限8KB)。
+これで「repo は一度も worker の永続 context に入らない」= 文脈オフロードを実装で保証する。
 
 ## 構成
 
@@ -66,7 +73,7 @@ repo の本文は「中央レーン」と「左(reader タブ)」にしか出さ
 - `src/secrets_store.py` — API キーの macOS キーチェーン保管(`run.sh auth`)
 - `src/repo_fetch.py` — 読み取り専用 repo fetch 層(nav の純粋部分の ownership fork)
 - `src/env.py` — .env リーダ(+ from_live_env でキー優先順位を実装)
-- `src/static/index.html` — 3レーン UI(EventSource + fetch POST、依存なし)
+- `src/static/index.html` — 単一レーン agent chat UI(EventSource + fetch POST、依存なし)
 - `scrape/` — scrape reader の実体(nav/ask/cdp、純 stdlib の CDP クライアント同梱)
 - `run.sh` — launcher / doctor / auth
 

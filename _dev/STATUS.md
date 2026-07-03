@@ -1,6 +1,6 @@
 # STATUS — consult-cockpit
 
-更新: 2026-07-03 (夜)
+更新: 2026-07-03 (深夜) — UI を3レーンから単一エージェント会話に刷新
 
 構成: ランタイムは `src/`(server / llm_client / secrets_store / repo_fetch / env + static)、
 governance は `_dev/`(オーナー規約)。ルートは入口/メタのみ。
@@ -23,13 +23,17 @@ P1 実装済み(2026-07-03、decisions 参照):
   解決順 $COCKPIT_SCRIPTS → <repo>/scrape → chatgpt-web スキル。上流で直してから再コピーの運用。
 
 動くもの（検証済み）:
-- 3レーン(左 reader ミラー / 中央 fetch トラフィック / 右 worker)。
-- worker 2ツール（2026-07-03）: fetch=repo が要れば worker が自分で読む（自律・安い、
-  ボタン無し）／consult=「ChatGPTに聞いて」の時だけ reader に外注（明示・~40s）。
-  入力は send 1本＋直接聞く ask reader ▶。forward ⇥（reader の回答のみ、上限8KB）。
-- 不変条件: repo 本文は worker の永続履歴に入らない。fetch も consult も各ツールラウンドは
-  transient（_run_worker の working）で、永続履歴に残るのは user turn と最終回答のみ。
-- consult の対話向け堅牢化（2026-07-03）: 待機ハートビート＋上限150s、空応答は error 化。
+- 単一レーン agent chat（2026-07-03、grill-me 決着 → narrative/decision-collapse-lanes.html）:
+  worker との1会話。🔧 fetch カード（worker 自律読み）／🔍 consult カード（実行中に展開で
+  live mirror）／ask reader ▶ → inline 回答カード＋[⇥ worker に渡す]／status pill
+  （考え中… / repo を読み中… / ChatGPT に質問中… Ns）。
+- worker 2ツール: fetch=自律（安い）／consult=明示のみ（~40s）。不変条件: repo 本文は
+  worker の永続履歴に入らない（全ツールラウンド transient、残るのは user turn＋最終回答）。
+- consult 中 live mirror: vendored nav.wait_complete に on_poll callback を追加、
+  ~2s 毎に waiting{secs}＋mirror{turns} を配信（cdp.py WS はスレッド非安全のため
+  controller スレッド上で実行。実機で交互配信を確認）。
+- consult の対話向け堅牢化: 上限150s、空応答は error 化。リロードは worker 履歴のみ復元
+  （tool カードはその場の観測）。
 - bare python3（venv なし・httpx なし）。doctor は worker-only／通常の両モード緑。
 
 起動:
