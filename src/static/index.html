@@ -5,98 +5,103 @@
 <title>consult cockpit</title>
 <style>
   :root{
-    --bg:#f4f5f7; --panel:#ffffff; --edge:#e0e3e8; --ink:#1c2126;
-    --dim:#6b7280; --star:#c2680c; --worker:#0a7d55; --reader:#1f6feb; --user:#7c3aed;
+    --bg:#ffffff; --ink:#0d0d0d; --dim:#8f8f8f; --edge:#e6e6e6;
+    --bubble:#ececf6;            /* user bubble (ChatGPT Atlas lavender) */
+    --accent:#7657d6;            /* send button / accents */
+    --worker:#0a7d55; --reader:#1f6feb; --star:#c2680c;
   }
   *{box-sizing:border-box}
   html,body{height:100%}
-  body{margin:0;font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--ink);
-       background:var(--bg);display:flex;flex-direction:column;height:100vh;overflow:hidden}
+  body{margin:0;color:var(--ink);background:var(--bg);
+       font:15px/1.7 -apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;
+       display:flex;flex-direction:column;height:100vh;overflow:hidden}
+  code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 
-  header{display:flex;align-items:center;gap:10px;padding:8px 16px;background:var(--panel);
-         border-bottom:1px solid var(--edge);flex:0 0 auto}
-  header b{font-size:14px}
-  header .sub{color:var(--dim);font-size:11px}
-  header .lbl{color:var(--dim);font-size:11px;margin-left:auto}
-  #repo{width:280px;border:1px solid var(--edge);border-radius:6px;padding:3px 8px;
-        font:inherit;font-size:11px;background:#fff}
-  #status{color:var(--dim);font-size:11px;white-space:nowrap}
+  header{display:flex;align-items:center;gap:10px;padding:10px 20px;flex:0 0 auto;
+         border-bottom:1px solid var(--edge)}
+  header b{font-size:15px;font-weight:700}
+  header .sub{color:var(--dim);font-size:12px}
+  header .lbl{color:var(--dim);font-size:12px;margin-left:auto}
+  #repo{width:300px;border:1px solid var(--edge);border-radius:999px;padding:4px 14px;
+        font:inherit;font-size:12px;background:#fff;color:#444}
+  #repo:focus{outline:none;border-color:#c9c9c9}
+  #status{color:var(--dim);font-size:12px;white-space:nowrap}
   #status .dot{display:inline-block;width:8px;height:8px;border-radius:50%;
                background:#c2c7cf;margin-right:5px;vertical-align:-1px}
-  #status.ok .dot{background:var(--worker)}
-  #status.bad .dot{background:#d1453b}
+  #status.ok .dot{background:#19c37d}
+  #status.bad .dot{background:#ef4146}
 
-  /* ---- the one lane ---- */
-  #chat{flex:1 1 auto;min-height:0;overflow-y:auto;padding:18px 16px 8px}
-  #chat .inner{max-width:820px;margin:0 auto}
+  /* ---- conversation ---- */
+  #chat{flex:1 1 auto;min-height:0;overflow-y:auto;padding:28px 20px 8px}
+  #chat .inner{max-width:768px;margin:0 auto}
 
-  .turn{margin:0 0 16px}
+  .turn{margin:0 0 26px}
   .turn.user{display:flex;justify-content:flex-end}
-  .turn.user pre{background:#ede9fe;border:1px solid #ddd3fb;border-radius:12px 12px 3px 12px;
-                 padding:8px 12px;max-width:85%}
-  .turn.assistant pre{padding:0 2px}
+  .turn.user pre{background:var(--bubble);border-radius:22px;padding:10px 18px;max-width:78%}
+  .turn.assistant pre{padding:0}
   .turn pre{margin:0;white-space:pre-wrap;word-break:break-word;font:inherit}
-  .sys{color:#a03d33;font-size:11.5px;margin:0 0 14px;padding-left:8px;border-left:2px solid #d1453b}
+  .sys{color:#b3453e;font-size:13px;margin:0 0 20px;padding-left:10px;border-left:2px solid #ef4146}
 
-  /* ---- tool cards (fetch / consult) ---- */
-  .tool{margin:0 0 16px;border:1px solid var(--edge);border-radius:10px;background:var(--panel);
-        overflow:hidden;font-size:12px}
-  .tool summary{cursor:pointer;list-style:none;padding:7px 12px;color:var(--dim);user-select:none}
+  /* ---- tool cards (fetch / consult) — ChatGPT の「検索しました ▸」の位置づけ ---- */
+  .tool{margin:0 0 18px;border:1px solid var(--edge);border-radius:14px;background:#fafafa;
+        overflow:hidden;font-size:13px}
+  .tool summary{cursor:pointer;list-style:none;padding:9px 16px;color:var(--dim);user-select:none}
   .tool summary::-webkit-details-marker{display:none}
-  .tool summary::before{content:'▸ '}
-  .tool[open] summary::before{content:'▾ '}
+  .tool summary::before{content:'▸ ';color:#c0c0c0}
+  .tool[open] summary::before{content:'▾ ';color:#c0c0c0}
   .tool summary:hover{color:var(--ink)}
-  .tool.consult{border-left:3px solid var(--reader)}
-  .tool.fetch{border-left:3px solid var(--worker)}
-  .tool .tbody{border-top:1px dashed var(--edge);padding:8px 12px;max-height:340px;overflow-y:auto}
-  .tool .act{color:var(--dim);font-size:11px;padding:2px 0}
-  .tool .act code{color:var(--star);word-break:break-all}
+  .tool .tbody{border-top:1px solid var(--edge);padding:10px 16px;max-height:340px;overflow-y:auto;background:#fff}
+  .tool .act{color:var(--dim);font-size:12px;padding:2px 0}
+  .tool .act code{color:var(--star);font-size:11px;word-break:break-all}
   /* reader turns inside an expanded consult card */
-  .tool .rturn{margin:8px 0}
+  .tool .rturn{margin:10px 0}
   .tool .rturn .rrole{font-size:10px;text-transform:uppercase;letter-spacing:.5px;
-                      font-weight:700;margin-bottom:2px}
-  .tool .rturn.user .rrole{color:var(--user)}
+                      font-weight:700;margin-bottom:2px;color:var(--dim)}
   .tool .rturn.assistant .rrole{color:var(--reader)}
-  .tool .rturn pre{margin:0;white-space:pre-wrap;word-break:break-word;font:inherit;font-size:11.5px}
+  .tool .rturn pre{margin:0;white-space:pre-wrap;word-break:break-word;font:inherit;font-size:12.5px}
   .tool .rturn details summary{cursor:pointer;color:var(--dim);list-style:none;padding:0}
   .tool .rturn details summary::before{content:'▸ '}
   .tool .rturn details[open] summary::before{content:'▾ '}
 
-  /* direct-consult answer card */
-  .rawans{margin:0 0 16px;border:1px solid #cfe0fb;border-left:3px solid var(--reader);
-          border-radius:10px;background:#f5f9ff;overflow:hidden}
-  .rawans .bar{display:flex;align-items:center;padding:6px 12px;border-bottom:1px dashed #cfe0fb}
-  .rawans .bar .t{font-size:11px;font-weight:700;color:var(--reader);text-transform:uppercase}
-  .rawans .bar button{margin-left:auto;font:inherit;font-size:11px;padding:2px 10px;
-                      border:1px solid var(--worker);color:var(--worker);background:#fff;
-                      border-radius:6px;cursor:pointer}
-  .rawans .bar button:hover:not(:disabled){background:#e6f6ee}
-  .rawans .bar button:disabled{opacity:.55;cursor:default}
-  .rawans pre{margin:0;padding:8px 12px;white-space:pre-wrap;word-break:break-word;
-              font:inherit;font-size:12px;max-height:260px;overflow-y:auto}
+  /* direct-consult raw answer card */
+  .rawans{margin:0 0 18px;border:1px solid var(--edge);border-radius:14px;background:#fff;overflow:hidden}
+  .rawans .bar{display:flex;align-items:center;padding:8px 16px;border-bottom:1px solid var(--edge);background:#fafafa}
+  .rawans .bar .t{font-size:12px;font-weight:700;color:var(--reader)}
+  .rawans .bar button{margin-left:auto;font:inherit;font-size:12px;padding:3px 14px;
+                      border:1px solid var(--edge);color:var(--ink);background:#fff;
+                      border-radius:999px;cursor:pointer}
+  .rawans .bar button:hover:not(:disabled){background:#f2f2f2}
+  .rawans .bar button:disabled{opacity:.5;cursor:default}
+  .rawans pre{margin:0;padding:10px 16px;white-space:pre-wrap;word-break:break-word;
+              font:inherit;font-size:14px;max-height:280px;overflow-y:auto}
 
-  /* ---- status pill + input ---- */
-  .footwrap{flex:0 0 auto;background:var(--panel);border-top:1px solid var(--edge)}
-  .footinner{max-width:820px;margin:0 auto;padding:8px 16px 12px}
-  #pill{font-size:11.5px;color:var(--dim);min-height:18px;padding:0 2px 4px}
+  /* ---- status + composer ---- */
+  .footwrap{flex:0 0 auto;padding:0 20px}
+  .footinner{max-width:768px;margin:0 auto;padding:4px 0 10px}
+  #pill{font-size:13px;color:var(--dim);min-height:22px;padding:0 6px 6px}
   #pill:empty{padding:0}
-  #pill .spin{display:inline-block;width:9px;height:9px;border:2px solid #c9cdd4;
-              border-top-color:var(--reader);border-radius:50%;margin-right:6px;
+  #pill .spin{display:inline-block;width:10px;height:10px;border:2px solid #ddd;
+              border-top-color:var(--accent);border-radius:50%;margin-right:7px;
               vertical-align:-1px;animation:sp .8s linear infinite}
   @keyframes sp{to{transform:rotate(360deg)}}
-  .inrow{display:flex;gap:8px;align-items:flex-end}
-  #w{flex:1;min-width:0;border:1px solid var(--edge);border-radius:10px;padding:8px 12px;
-     font:inherit;resize:none;background:#fff;max-height:120px}
-  #w:focus{outline:none;border-color:var(--reader)}
-  .inrow button{font:inherit;font-size:12px;padding:8px 14px;border-radius:10px;cursor:pointer;
-                background:#fff;border:1px solid var(--edge);color:var(--ink);white-space:nowrap}
-  .inrow button:hover:not(:disabled){background:#f2f4f6}
-  .inrow button:disabled{opacity:.5;cursor:default}
-  .inrow button.ask{border-color:var(--reader);color:var(--reader)}
-  .inrow button.ask:hover:not(:disabled){background:#e8f0fe}
-  .inrow button.go{border-color:var(--worker);color:var(--worker);font-weight:700}
-  .inrow button.go:hover:not(:disabled){background:#e6f6ee}
-  .hint{color:#a9afba;font-size:10px;padding:4px 2px 0}
+
+  .composer{border:1px solid var(--edge);border-radius:26px;background:#fff;
+            box-shadow:0 2px 14px rgba(0,0,0,.05);padding:10px 12px 8px}
+  .composer:focus-within{border-color:#d0d0d0}
+  #w{display:block;width:100%;border:0;padding:2px 8px 8px;font:inherit;resize:none;
+     background:transparent;max-height:160px}
+  #w:focus{outline:none}
+  .crow{display:flex;align-items:center;gap:8px}
+  .chip{font:inherit;font-size:13px;color:#444;background:#fff;border:1px solid var(--edge);
+        border-radius:999px;padding:5px 14px;cursor:pointer;white-space:nowrap}
+  .chip:hover:not(:disabled){background:#f2f2f2}
+  .chip:disabled{opacity:.45;cursor:default}
+  .sendbtn{margin-left:auto;width:36px;height:36px;border-radius:50%;border:0;cursor:pointer;
+           background:var(--accent);color:#fff;font-size:17px;line-height:1;
+           display:flex;align-items:center;justify-content:center}
+  .sendbtn:hover:not(:disabled){filter:brightness(1.08)}
+  .sendbtn:disabled{background:#d9d9e3;cursor:default}
+  .hint{color:#b4b4b4;font-size:11.5px;text-align:center;padding:8px 0 2px}
 </style>
 </head>
 <body>
@@ -106,7 +111,7 @@
   <span class="sub" id="wlabel">worker</span>
   <span class="lbl">repo</span>
   <input id="repo" value="." spellcheck="false" title="worker / reader が読む対象 repo">
-  <span id="status" class="bad"><span class="dot"></span>reader: …</span>
+  <span id="status" class="bad"><span class="dot"></span>…</span>
 </header>
 
 <div id="chat"><div class="inner" id="feed"></div></div>
@@ -114,14 +119,15 @@
 <div class="footwrap">
   <div class="footinner">
     <div id="pill"></div>
-    <div class="inrow">
-      <textarea id="w" rows="1"
-        placeholder="worker に話す… 必要なら自分で repo を読む (Enter=send / Shift+Enter=改行)"></textarea>
-      <button class="ask" id="askBtn" onclick="askReader()"
-        title="入力を質問として reader(強いモデル)に repo を読ませて直接聞く">ask reader ▶</button>
-      <button class="go" id="sendBtn" onclick="wsend()">send</button>
+    <div class="composer">
+      <textarea id="w" rows="1" placeholder="質問してみましょう — 必要なら worker が自分で repo を読みます"></textarea>
+      <div class="crow">
+        <button class="chip" id="askBtn" onclick="askReader()"
+          title="入力を質問として強いモデルに repo を読ませて直接聞く">ChatGPT に聞く</button>
+        <button class="sendbtn" id="sendBtn" onclick="wsend()" title="send (Enter)">↑</button>
+      </div>
     </div>
-    <div class="hint">repo 本文は worker の会話履歴に入らない — 読みは使い捨て context のみ(このツールの不変条件)</div>
+    <div class="hint">repo 本文は worker の会話履歴に入りません — 読みは使い捨て context のみ（このツールの不変条件）</div>
   </div>
 </div>
 
@@ -131,14 +137,20 @@ const esc = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g
 const chatEl = $('chat'), feed = $('feed');
 const atBottom = () => chatEl.scrollHeight - chatEl.scrollTop - chatEl.clientHeight < 60;
 const scrollDown = () => { chatEl.scrollTop = chatEl.scrollHeight; };
-function autogrow(el){ el.style.height='auto'; el.style.height=Math.min(el.scrollHeight,120)+'px'; }
+function autogrow(el){ el.style.height='auto'; el.style.height=Math.min(el.scrollHeight,160)+'px'; }
 $('w').addEventListener('input', e=>autogrow(e.target));
+
+// reader's display name: "ChatGPT" for the scrape reader, the model name for an API reader
+let readerName='ChatGPT';
+function applyReaderName(){
+  $('askBtn').textContent = readerName+' に聞く';
+}
 
 // ---- busy state ----
 let workerBusy=false, consultBusy=false;
 function paintButtons(){
   $('sendBtn').disabled = workerBusy;
-  const a=$('askBtn'); a.disabled = consultBusy;
+  $('askBtn').disabled = consultBusy;
 }
 function pill(html){ const stick=atBottom(); $('pill').innerHTML = html||''; if(stick) scrollDown(); }
 const spin = t => `<span class="spin"></span>${esc(t)}`;
@@ -163,17 +175,17 @@ let fetchCard=null;                // {body} while a worker fetch round is in fl
 function openFetchCard(summary){
   const stick=atBottom();
   const det=document.createElement('details'); det.className='tool fetch';
-  det.innerHTML=`<summary>🔧 ${esc(summary)}</summary><div class="tbody"></div>`;
+  det.innerHTML=`<summary>repo を読んだ</summary><div class="tbody"></div>`;
   feed.appendChild(det); if(stick) scrollDown();
   fetchCard={body:det.querySelector('.tbody')};
 }
 // consult card: the reader (ChatGPT) studies the repo — expandable live mirror
-let consult=null;                  // {det,sum,body,mirror,direct,baseTitle}
+let consult=null;                  // {det,sum,body,mirror,direct,sig}
 let consultOrigin='direct';        // set to 'worker' by a toolcall right before consult:start
 function openConsultCard(){
   const stick=atBottom();
   const det=document.createElement('details'); det.className='tool consult';
-  det.innerHTML=`<summary>🔍 ChatGPT に質問中…</summary>
+  det.innerHTML=`<summary>${esc(readerName)} に質問中…</summary>
     <div class="tbody"><div class="acts"></div><div class="mir"></div></div>`;
   feed.appendChild(det); if(stick) scrollDown();
   consult={det, sum:det.querySelector('summary'), body:det.querySelector('.acts'),
@@ -210,18 +222,22 @@ function renderConsultMirror(turns){
 function rawAnswerCard(text){
   const stick=atBottom();
   const d=document.createElement('div'); d.className='rawans';
-  d.innerHTML=`<div class="bar"><span class="t">ChatGPT の回答</span>
+  d.innerHTML=`<div class="bar"><span class="t">${esc(readerName)} の回答</span>
     <button onclick="forward(this)">⇥ worker に渡す</button></div>
     <pre>${esc(text)}</pre>`;
   feed.appendChild(d); if(stick) scrollDown();
 }
 function forward(btn){ btn.disabled=true; btn.textContent='渡した ✓'; post('/forward',{}); }
 
-// ---- lane labels from live config ----
+// ---- labels from live config ----
 fetch('/state').then(r=>r.json()).then(s=>{
   if(s.default_repo) $('repo').value = s.default_repo;
   if(s.worker_model){ $('wlabel').textContent = s.worker_model; document.title = 'cockpit — '+s.worker_model; }
+  if(s.reader_mode==='api') readerName = s.reader_model || 'API reader';
+  if(s.reader_mode==='disabled') $('askBtn').style.display='none';
+  applyReaderName();
 }).catch(()=>{});
+applyReaderName();
 
 // ---- SSE ----
 const ev = new EventSource('/events');
@@ -231,7 +247,7 @@ ev.onmessage = e => {
     case 'status': {
       const ok = m.reader==='connected'||m.reader==='api';
       $('status').className = ok?'ok':'bad';
-      $('status').innerHTML = `<span class="dot"></span>reader: ${esc(m.reader)}`+
+      $('status').innerHTML = `<span class="dot"></span>${esc(readerName)}: ${esc(m.reader)}`+
                               (m.detail?` · ${esc((m.detail+'').slice(0,60))}`:'');
       break; }
     case 'mirror': renderConsultMirror(m.turns); break;   // only lands in an open consult card
@@ -240,16 +256,16 @@ ev.onmessage = e => {
         case 'start': consultBusy=true; paintButtons(); openConsultCard(); break;
         case 'briefed': consultAct('repo の説明と質問を送った'); break;
         case 'waiting':
-          if(consult) consult.sum.textContent = `🔍 ChatGPT に質問中… ${m.secs}s`;
-          pill(spin(`ChatGPT に質問中… ${m.secs}s`)); break;
+          if(consult) consult.sum.textContent = `${readerName} に質問中… ${m.secs}s`;
+          pill(spin(`${readerName} に質問中… ${m.secs}s`)); break;
         case 'done':
           consultBusy=false; paintButtons();
-          if(consult){ consult.sum.textContent='🔍 ChatGPT に質問した'; consult=null; }
+          if(consult){ consult.sum.textContent=`${readerName} に質問した`; consult=null; }
           if(!workerBusy) pill('');
           break;
         case 'error':
           consultBusy=false; paintButtons();
-          if(consult){ consult.sum.textContent='🔍 ChatGPT への質問が失敗'; consult=null; }
+          if(consult){ consult.sum.textContent=`${readerName} への質問が失敗`; consult=null; }
           sysline('consult error: '+(m.detail||''));
           if(!workerBusy) pill('');
           break;
@@ -260,8 +276,8 @@ ev.onmessage = e => {
         if(fetchCard) fetchCard.body.insertAdjacentHTML('beforeend',
           `<div class="act">round ${m.round} · <code>${esc(m.names)}</code></div>`);
       } else {
-        consultAct(`round ${m.round} · ChatGPT が読む: <code>${esc(m.names)}</code>`);
-        if(consult) consult.sum.textContent = `🔍 ChatGPT が repo を読んでいる… round ${m.round}`;
+        consultAct(`round ${m.round} · ${esc(readerName)} が読む: <code>${esc(m.names)}</code>`);
+        if(consult) consult.sum.textContent = `${readerName} が repo を読んでいる… round ${m.round}`;
       }
       break;
     case 'served':
@@ -272,7 +288,7 @@ ev.onmessage = e => {
       break;
     case 'answer':
       // 'answer' fires before consult:done, so the card is still live here.
-      // direct consult (ask reader ▶): show the raw answer with a hand-off action.
+      // direct consult (ChatGPT に聞く): show the raw answer with a hand-off action.
       // worker-mediated consult: skip — the worker's synthesis streams next.
       if(consult && consult.direct) rawAnswerCard(m.text||'');
       break;
@@ -297,10 +313,10 @@ function onWorker(m){
       // collapse the streamed tool block into a card
       if(wCur){ const t=wCur.closest('.turn'); if(t) t.remove(); }
       wCur=null;
-      if(m.kind==='fetch'){ openFetchCard(m.summary||'repo を読んだ'); pill(spin('repo を読み中…')); }
-      else { consultOrigin='worker'; pill(spin('ChatGPT に質問中…')); }
+      if(m.kind==='fetch'){ openFetchCard(m.summary||''); pill(spin('repo を読み中…')); }
+      else { consultOrigin='worker'; pill(spin(`${readerName} に質問中…`)); }
       break;
-    case 'consulting': wCur=null; consultOrigin='worker'; pill(spin('ChatGPT に質問中…')); break;
+    case 'consulting': wCur=null; consultOrigin='worker'; pill(spin(`${readerName} に質問中…`)); break;
     case 'exploring': workerBusy=true; pill(spin(`repo を探索中… round ${m.round}`)); paintButtons(); break;
     case 'delta':
       if(!wCur){ wCur = turn('assistant',''); fetchCard=null; }
@@ -324,7 +340,7 @@ function wsend(){
 function askReader(){
   const question = $('w').value.trim(); if(!question||consultBusy) return;
   consultOrigin='direct';
-  turn('user', question+'  (→ reader に直接)');
+  turn('user', question+`  (→ ${readerName} に直接)`);
   post('/consult', {repo:$('repo').value.trim(), question}).then(r=>{
     if(r&&r.error){ consultBusy=false; paintButtons();
       sysline('consult error: '+r.error+(r.detail?' — '+r.detail:'')); }
