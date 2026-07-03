@@ -14,8 +14,26 @@
   html,body{height:100%}
   body{margin:0;color:var(--ink);background:var(--bg);
        font:15px/1.7 -apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;
-       display:flex;flex-direction:column;height:100vh;overflow:hidden}
+       display:flex;flex-direction:row;height:100vh;overflow:hidden}
   code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  #main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;height:100vh}
+
+  /* ---- sidebar: past sessions (Claude Code-style) ---- */
+  #side{flex:0 0 232px;background:#f9f9f9;border-right:1px solid var(--edge);
+        display:flex;flex-direction:column;padding:12px 10px;overflow-y:auto}
+  .newbtn{font:inherit;font-size:13px;font-weight:600;color:var(--ink);background:#fff;
+          border:1px solid var(--edge);border-radius:10px;padding:8px 12px;cursor:pointer;
+          text-align:left;margin-bottom:14px}
+  .newbtn:hover{background:#f2f2f2}
+  .shead{font-size:11px;color:var(--dim);font-weight:700;padding:0 6px 6px}
+  .sitem{border-radius:8px;padding:6px 8px;cursor:pointer;margin-bottom:2px}
+  .sitem:hover{background:#efefef}
+  .sitem.active{background:#ececf6}
+  .sitem .st{font-size:12.5px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;
+             white-space:nowrap}
+  .sitem .ss{font-size:10.5px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;
+             white-space:nowrap}
+  .sempty{font-size:11.5px;color:#b4b4b4;padding:2px 8px}
 
   header{display:flex;align-items:center;gap:10px;padding:10px 20px;flex:0 0 auto;
          border-bottom:1px solid var(--edge)}
@@ -126,12 +144,17 @@
 </head>
 <body>
 
+<aside id="side">
+  <button class="newbtn" onclick="newSession()">＋ 新規セッション</button>
+  <div class="shead">最近のセッション</div>
+  <div id="slist"><div class="sempty">まだありません</div></div>
+</aside>
+
+<div id="main">
 <header>
   <b>consult cockpit</b>
   <span class="sub" id="wlabel">worker</span>
   <span class="lbl" id="repoName" title=""></span>
-  <button id="newBtn" onclick="newSession()" style="display:none"
-    title="repo を選び直して新しい会話を始める（履歴はクリア）">＋ 新規セッション</button>
   <span id="status" class="bad"><span class="dot"></span>…</span>
 </header>
 
@@ -165,6 +188,7 @@
     <div class="hint">repo 本文は worker の会話履歴に入りません — 読みは使い捨て context のみ（このツールの不変条件）</div>
   </div>
 </div>
+</div><!-- /main -->
 
 <script>
 const $ = id => document.getElementById(id);
@@ -265,23 +289,28 @@ function rawAnswerCard(text){
 function forward(btn){ btn.disabled=true; btn.textContent='渡した ✓'; post('/forward',{}); }
 
 // ---- session: the conversation is ABOUT one repo, chosen first ----
+let curSid='';
 function showLanding(){
   $('landing').style.display=''; $('footwrap').style.display='none';
-  $('newBtn').style.display='none'; $('repoName').textContent='';
+  $('repoName').textContent='';
 }
 function showChat(repoPath){
   $('landing').style.display='none'; $('footwrap').style.display='';
-  $('newBtn').style.display='';
   const name = repoPath.split('/').filter(Boolean).pop() || repoPath;
   $('repoName').textContent = '📁 '+name; $('repoName').title = repoPath;
   $('w').focus();
 }
+function resetFeed(){ feed.innerHTML=''; wCur=null; fetchCard=null; consult=null; }
 async function startSession(path){
   if(!path) return;
   const r = await post('/session', {repo:path});
   if(r.error){ alert(r.error); return; }
-  feed.innerHTML=''; wCur=null; fetchCard=null; consult=null;
-  showChat(r.repo);
+  // rendering happens in the SSE 'session' handler (single path for all tabs)
+}
+async function resumeSession(id){
+  if(id===curSid) return;
+  const r = await post('/session', {id});
+  if(r.error){ alert(r.error); loadSessions(); }
 }
 async function pickAndStart(){
   const b=$('lpickBtn'); b.disabled=true;
@@ -291,10 +320,31 @@ async function pickAndStart(){
     else if(r.error) alert('picker: '+r.error);
   } finally { b.disabled=false; }
 }
-function newSession(){ showLanding(); }
+function newSession(){ curSid=''; resetFeed(); showLanding(); loadSessions(); }
 $('lpath').addEventListener('keydown', e=>{
   if(e.key==='Enter'){ e.preventDefault(); startSession($('lpath').value.trim()); }
 });
+
+// ---- sidebar: past sessions ----
+function rel(t){
+  const s=(Date.now()/1000)-t;
+  if(s<60) return 'たった今';
+  if(s<3600) return Math.floor(s/60)+'分前';
+  if(s<86400) return Math.floor(s/3600)+'時間前';
+  return Math.floor(s/86400)+'日前';
+}
+async function loadSessions(){
+  try{
+    const r = await fetch('/sessions'); const d = await r.json();
+    const list = d.sessions||[];
+    if(!list.length){ $('slist').innerHTML='<div class="sempty">まだありません</div>'; return; }
+    $('slist').innerHTML = list.map(s=>
+      `<div class="sitem${s.id===curSid?' active':''}" onclick="resumeSession('${s.id}')" title="${esc(s.repo)}">
+         <div class="st">${esc(s.title||'(無題)')}</div>
+         <div class="ss">📁 ${esc(s.name)} · ${rel(s.updated)}</div>
+       </div>`).join('');
+  }catch(_){}
+}
 
 // ---- labels from live config ----
 fetch('/state').then(r=>r.json()).then(s=>{
@@ -302,6 +352,8 @@ fetch('/state').then(r=>r.json()).then(s=>{
   if(s.reader_mode==='api') readerName = s.reader_model || 'API reader';
   if(s.reader_mode==='disabled') $('askBtn').style.display='none';
   if(!s.can_pick) $('lpickBtn').style.display='none';
+  curSid = s.session_id||'';
+  loadSessions();
   if(s.session_repo) showChat(s.session_repo);          // mid-session reload
   else {
     showLanding();
@@ -367,9 +419,14 @@ ev.onmessage = e => {
       // worker-mediated consult: skip — the worker's synthesis streams next.
       if(consult && consult.direct) rawAnswerCard(m.text||'');
       break;
-    case 'session':          // a session started (possibly from another tab)
-      feed.innerHTML=''; wCur=null; fetchCard=null; consult=null;
-      showChat(m.repo); break;
+    case 'session': {        // a session started/resumed (any tab) — single render path
+      curSid = m.id||'';
+      resetFeed(); showChat(m.repo);
+      fetch('/state').then(r=>r.json()).then(s=>{     // replay the resumed history
+        (s.worker||[]).forEach(t=>turn(t.role, t.content));
+      }).catch(()=>{});
+      loadSessions();
+      break; }
     case 'explore': break;   // programmatic /worker-explore — no UI surface
     case 'worker': onWorker(m); break;
   }
@@ -399,7 +456,8 @@ function onWorker(m){
     case 'delta':
       if(!wCur){ wCur = turn('assistant',''); fetchCard=null; }
       wCur.textContent += m.content; if(atBottom()) scrollDown(); break;
-    case 'done': wCur=null; fetchCard=null; workerBusy=false; pill(''); paintButtons(); break;
+    case 'done': wCur=null; fetchCard=null; workerBusy=false; pill(''); paintButtons();
+      loadSessions(); break;   // title/updated may have changed
     case 'busy': pill('busy — 前の応答を待って'); break;
     case 'error': wCur=null; fetchCard=null; workerBusy=false; paintButtons();
       pill(''); sysline('worker error: '+(m.detail||'')); break;

@@ -2,6 +2,24 @@
 
 過去エントリは書き換えない。
 
+## 2026-07-03 セッション永続化＋左サイドバー（Claude Code の「最近の項目」）
+
+- オーナー「過去のセッションを左サイドに乗せることはできないんですか？claude code みたいに」。
+- 前提が1つ欠けていた: セッションはメモリのみで、新規セッション/再起動で消えていた。
+  永続化を先に敷いた — `~/.consult-cockpit/sessions/<id>.json`（COCKPIT_STATE で変更可、
+  stdlib json、tmp+os.replace の atomic 書き、初回ターンまで書かない=空セッションは
+  一覧に出ない）。書き込みは履歴/last_answer の全変異点で _persist_locked()
+  （_state_lock 保持中に呼ぶ規約）。タイトルは最初の user 発言の先頭48字（Claude Code 式）。
+- API: GET /sessions（メタ一覧、更新順、上限50）／POST /session が {repo}=新規 と
+  {id}=復元 の両対応（復元は履歴+last_answer をロード）。/state に session_id。
+- UI: 左サイドバー（＋新規セッション／最近のセッション一覧、active ハイライト、相対時刻）。
+  描画は SSE 'session' イベントに一本化 — 発火タブも他タブも同じ経路で
+  resetFeed→showChat→/state から履歴再描画→一覧更新（POST 応答側で描画しない）。
+- 3レーン廃止で消えた「左ペイン」が別の役割（観測でなくナビゲーション）で復活した形。
+  UI の面は観測でなく「ユーザーの作業単位」に割るのが正しい、の再確認。
+- テスト: test_9（保存→一覧→タイトル→切替で履歴クリア→復元で履歴復活→未知 id 404）。
+  e2e は COCKPIT_STATE をサンドボックスに向けて実ディレクトリを汚さない。
+
 ## 2026-07-03 repo はセッション先頭で固定（Claude Code モデル）＋ネイティブ picker
 
 - オーナー提案「Claude Code / Codex みたいに先にフォルダを指定して、指定後は変えられない

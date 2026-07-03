@@ -212,13 +212,17 @@ def unsubscribe(q: queue.Queue) -> None:
 # =============================================================================
 # A conversation is ABOUT one repo (Claude Code's model): the repo is chosen
 # up front (POST /session), fixed for the session, and switching repos starts
-# a new session (history cleared). None until the first pick → the UI shows
-# a landing screen.
+# a new session. Sessions persist to SESSIONS_DIR as small json files, so the
+# sidebar can list and resume past conversations across restarts.
 _state_lock = threading.Lock()
+_session_id: str = ""
 _session_repo: str = ""
 _worker_history: list[dict] = []
 _last_reader_answer: str = ""
 _worker_busy = False
+
+SESSIONS_DIR = os.path.join(os.path.expanduser(
+    os.environ.get("COCKPIT_STATE", "~/.consult-cockpit")), "sessions")
 
 
 def worker_snapshot() -> list[dict]:
@@ -226,21 +230,84 @@ def worker_snapshot() -> list[dict]:
         return list(_worker_history)
 
 
-def start_session(repo: str):
-    """Bind a new session to repo: set it and clear the conversation.
+def _persist_locked():
+    """Write the current session to disk (atomic). Caller holds _state_lock.
+    Nothing is written until the first turn, so abandoned empty sessions
+    never appear in the sidebar."""
+    if not _session_id or not _session_repo or not _worker_history:
+        return
+    try:
+        os.makedirs(SESSIONS_DIR, exist_ok=True)
+        title = next((m["content"].splitlines()[0][:48]
+                      for m in _worker_history if m["role"] == "user"), "")
+        data = {"id": _session_id, "repo": _session_repo, "title": title,
+                "updated": time.time(), "history": _worker_history,
+                "last_answer": _last_reader_answer}
+        tmp = os.path.join(SESSIONS_DIR, _session_id + ".tmp")
+        with open(tmp, "w") as f:
+            json.dump(data, f, ensure_ascii=False)
+        os.replace(tmp, os.path.join(SESSIONS_DIR, _session_id + ".json"))
+    except OSError:
+        pass  # persistence is best-effort; the live session keeps working
+
+
+def list_sessions() -> list[dict]:
+    """Sidebar metadata for saved sessions, most recent first."""
+    out = []
+    try:
+        names = [n for n in os.listdir(SESSIONS_DIR) if n.endswith(".json")]
+    except OSError:
+        return out
+    for n in names:
+        try:
+            with open(os.path.join(SESSIONS_DIR, n)) as f:
+                d = json.load(f)
+            out.append({"id": d["id"], "repo": d["repo"],
+                        "name": os.path.basename(d["repo"]),
+                        "title": d.get("title", ""),
+                        "updated": d.get("updated", 0),
+                        "turns": len(d.get("history", []))})
+        except (OSError, ValueError, KeyError):
+            continue
+    out.sort(key=lambda s: s["updated"], reverse=True)
+    return out[:50]
+
+
+def start_session(repo: str = "", sid: str = ""):
+    """Bind the conversation: new session on a repo, or resume a saved one.
     Returns (http_status, payload)."""
-    global _session_repo, _last_reader_answer
-    root = os.path.abspath(os.path.expanduser(repo))
+    global _session_id, _session_repo, _last_reader_answer
+    if sid:                                   # resume
+        if not re.fullmatch(r"[0-9a-f]+", sid):
+            return 400, {"error": "bad session id"}
+        try:
+            with open(os.path.join(SESSIONS_DIR, sid + ".json")) as f:
+                d = json.load(f)
+        except (OSError, ValueError):
+            return 404, {"error": "session not found"}
+        with _state_lock:
+            if _worker_busy:
+                return 409, {"error": "worker busy — wait for the current reply"}
+            _session_id = d["id"]
+            _session_repo = d["repo"]
+            _worker_history[:] = d.get("history", [])
+            _last_reader_answer = d.get("last_answer", "")
+        broadcast("session", {"id": _session_id, "repo": _session_repo,
+                              "name": os.path.basename(_session_repo)})
+        return 200, {"id": _session_id, "repo": _session_repo}
+    root = os.path.abspath(os.path.expanduser(repo))   # new
     if not os.path.isdir(root):
         return 400, {"error": f"not a dir: {root}"}
     with _state_lock:
         if _worker_busy:
             return 409, {"error": "worker busy — wait for the current reply"}
+        _session_id = format(int(time.time() * 1000), "x")
         _session_repo = root
         _worker_history.clear()
         _last_reader_answer = ""
-    broadcast("session", {"repo": root, "name": os.path.basename(root)})
-    return 200, {"repo": root}
+    broadcast("session", {"id": _session_id, "repo": root,
+                          "name": os.path.basename(root)})
+    return 200, {"id": _session_id, "repo": root}
 
 
 def session_repo() -> str:
@@ -351,6 +418,7 @@ class TabController(threading.Thread):
                         return None
                     with _state_lock:
                         _last_reader_answer = answer
+                        _persist_locked()
                     broadcast("answer", {"text": answer})
                     broadcast("consult", {"status": "done", "rounds": i})
                     return answer
@@ -365,6 +433,7 @@ class TabController(threading.Thread):
             if answer:
                 with _state_lock:
                     _last_reader_answer = answer
+                    _persist_locked()
                 broadcast("answer", {"text": answer, "note": "max_rounds"})
             broadcast("consult", {"status": "done", "rounds": MAX_CONSULT_ROUNDS})
             return answer
@@ -463,6 +532,7 @@ def _run_api_consult(repo: str, question: str) -> None:
             _mirror_from(transient)
         with _state_lock:
             _last_reader_answer = answer
+            _persist_locked()
         broadcast("answer", {"text": answer})
         broadcast("consult", {"status": "done"})
         return answer
@@ -516,6 +586,7 @@ def _run_worker(user_msg: str, repo: str = "") -> None:
             return
         _worker_busy = True
         _worker_history.append({"role": "user", "content": user_msg})
+        _persist_locked()
         history = list(_worker_history)
     broadcast("worker", {"status": "start", "role": "user", "content": user_msg})
     root = os.path.abspath(os.path.expanduser(repo or DEFAULT_REPO))
@@ -566,6 +637,7 @@ def _run_worker(user_msg: str, repo: str = "") -> None:
             final = _stream(working)
         with _state_lock:
             _worker_history.append({"role": "assistant", "content": final})
+            _persist_locked()
         broadcast("worker", {"status": "done", "content": final})
     except Exception as e:  # noqa: BLE001
         broadcast("worker", {"status": "error", "detail": repr(e)})
@@ -589,6 +661,7 @@ def _run_worker_explore(repo: str, task: str) -> None:
             return
         _worker_busy = True
         _worker_history.append({"role": "user", "content": task})
+        _persist_locked()
     broadcast("worker", {"status": "start", "role": "user", "content": task})
     if not os.path.isdir(root):
         broadcast("worker", {"status": "error", "detail": f"not a dir: {root}"})
@@ -619,6 +692,7 @@ def _run_worker_explore(repo: str, task: str) -> None:
             answer = "".join(stream_chat(transient, max_tokens=1024)).strip()
         with _state_lock:
             _worker_history.append({"role": "assistant", "content": answer})
+            _persist_locked()
         broadcast("worker", {"status": "msg", "role": "assistant", "content": answer})
         broadcast("explore", {"status": "done"})
     except Exception as e:  # noqa: BLE001
@@ -663,6 +737,7 @@ def _forward_to_worker() -> dict:
                ("\n\n[...truncated]" if truncated else ""))
     with _state_lock:
         _worker_history.append({"role": "user", "content": content})
+        _persist_locked()
     broadcast("worker", {"status": "forwarded", "role": "user", "content": content})
     return {"ok": True, "bytes": len(capped), "truncated": truncated}
 
@@ -727,10 +802,13 @@ class Handler(BaseHTTPRequestHandler):
                                  "last_answer": _last_reader_answer,
                                  "default_repo": DEFAULT_REPO,
                                  "session_repo": _session_repo,
+                                 "session_id": _session_id,
                                  "worker_model": wcfg.model if wcfg else "",
                                  "reader_mode": rmode,
                                  "reader_model": rmodel,
                                  "can_pick": sys.platform == "darwin"})
+        elif self.path == "/sessions":
+            self._json(200, {"sessions": list_sessions()})
         elif self.path == "/events":
             self._sse()
         else:
@@ -770,7 +848,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         body = self._read_json()
         if self.path == "/session":
-            return self._json(*start_session(body.get("repo") or ""))
+            return self._json(*start_session(repo=body.get("repo") or "",
+                                             sid=body.get("id") or ""))
         elif self.path == "/consult":
             repo = body.get("repo") or session_repo() or DEFAULT_REPO
             question = (body.get("question") or "").strip()

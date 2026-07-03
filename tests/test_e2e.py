@@ -77,6 +77,7 @@ class E2ETest(unittest.TestCase):
             "COCKPIT_SCRIPTS": "/nonexistent",  # scrape absent
             "COCKPIT_PORT": str(cls.port),
             "COCKPIT_REPO": cls.tmp.name,
+            "COCKPIT_STATE": cls.tmp.name,  # session files stay in the sandbox
         })
         cls.srv = subprocess.Popen(
             [sys.executable, os.path.join(ROOT, "src", "server.py")], env=env,
@@ -186,6 +187,30 @@ class E2ETest(unittest.TestCase):
             "MOCK-CHAT" in m["content"] for m in self.state()["worker"])))
         code, body = post_json(self.url + "/session", {"repo": "/no/such/dir"})
         self.assertEqual(code, 400)                      # bad repo rejected
+
+    def test_9_sessions_persist_and_resume(self):
+        """Past sessions land in the sidebar list and can be resumed with
+        their history intact."""
+        code, body = post_json(self.url + "/session", {"repo": self.tmp.name})
+        self.assertEqual(code, 200)
+        sid = body["id"]
+        post_json(self.url + "/worker", {"message": "hi"})
+        self.assertTrue(wait_until(lambda: any(
+            "MOCK-CHAT" in m["content"] for m in self.state()["worker"])))
+        sessions = get_json(self.url + "/sessions")["sessions"]
+        mine = [s for s in sessions if s["id"] == sid]
+        self.assertEqual(len(mine), 1)                   # saved + listed
+        self.assertEqual(mine[0]["title"], "hi")         # first user msg as title
+        # switch away (new session clears), then resume — history comes back
+        code, _ = post_json(self.url + "/session", {"repo": self.tmp.name})
+        self.assertEqual(code, 200)
+        self.assertEqual(self.state()["worker"], [])
+        code, _ = post_json(self.url + "/session", {"id": sid})
+        self.assertEqual(code, 200)
+        hist = self.state()["worker"]
+        self.assertTrue(any("MOCK-CHAT" in m["content"] for m in hist))
+        code, _ = post_json(self.url + "/session", {"id": "ffff"})
+        self.assertEqual(code, 404)                      # unknown id
 
     def test_7_worker_fetches_repo_itself_transiently(self):
         """Autonomous repo read: when the message needs files, the worker emits
