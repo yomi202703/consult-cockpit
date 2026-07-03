@@ -73,7 +73,7 @@ CONSULT_WAIT_CAP = 150        # per-round wait cap (s) — interactive: fail vis
 # the budget, older turns are folded into one summary turn (Claude Code's
 # model). Budget is tokens, override per deployment.
 WORKER_CONTEXT_TOKENS = int(os.environ.get("WORKER_LLM_CONTEXT", "16000"))
-COMPACT_AT = 0.7              # compact when est. usage crosses this fraction
+COMPACT_AT = 1.0              # compact only when the budget is actually full (owner call)
 COMPACT_KEEP_TURNS = 6        # most-recent turns kept verbatim
 
 _FENCE_RE = re.compile(r"```([\w-]*)\s*\n(.*?)```", re.DOTALL)

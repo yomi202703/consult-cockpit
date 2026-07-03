@@ -164,7 +164,7 @@
 <header>
   <b>consult cockpit</b>
   <span class="sub" id="wlabel">worker</span>
-  <span class="sub" id="ctx" title="worker の context window 使用率(推定)。7割で自動圧縮"></span>
+  <span class="sub" id="ctx" title="worker の context window 使用率(推定)。100%で自動圧縮・90%で切り替え推奨"></span>
   <span class="lbl" id="repoName" title=""></span>
   <span id="status" class="bad"><span class="dot"></span>…</span>
 </header>
@@ -251,7 +251,7 @@ function setCtx(pct){
     ctxWarned=true;
     const stick=atBottom();
     const d=document.createElement('div'); d.className='warn';
-    d.textContent='⚠ context が90%を超えました — 自動圧縮でも収まりにくくなっています。「＋ 新規セッション」への切り替えを推奨';
+    d.textContent='⚠ context が90%を超えました — 100%で古い会話が自動圧縮されます。「＋ 新規セッション」への切り替えも検討を';
     feed.appendChild(d); if(stick) scrollDown();
   }
   if(pct<90) ctxWarned=false;                   // re-arm after a compaction shrinks it
