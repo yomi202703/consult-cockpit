@@ -66,7 +66,9 @@
             max-height:220px;overflow-y:auto}
   .foot{border-top:1px solid var(--edge);padding:8px;background:var(--panel);display:flex;gap:6px;flex:0 0 auto;align-items:flex-end}
   .foot.col{flex-direction:column;align-items:stretch}
-  .btnrow{display:flex;gap:6px;justify-content:flex-end}
+  .btnrow{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+  .foot button.ask{border-color:var(--reader);color:var(--reader)}
+  .foot button.ask:hover:not(:disabled){background:#e8f0fe}
   .foot input,.foot textarea{flex:1;min-width:0;background:#fff;border:1px solid var(--edge);
     color:var(--ink);border-radius:6px;padding:7px 9px;font:inherit;resize:none}
   .foot input:focus,.foot textarea:focus{outline:none;border-color:var(--reader)}
@@ -114,8 +116,10 @@
     <div class="foot col">
       <textarea id="w" rows="1" placeholder="worker に話す… (Enter=send / Shift+Enter=改行)"></textarea>
       <div class="btnrow">
+        <button class="ask" id="askBtn" onclick="askReader()"
+          title="↑の入力を質問として reader(強いモデル)に repo を読ませて聞く">ask reader ▶</button>
         <button id="exploreBtn" onclick="explore()"
-          title="↑の入力をタスクとして、左の repo を worker 自身がローカル探索する">explore repo ▶</button>
+          title="↑の入力をタスクとして、worker 自身が repo をローカル探索する">explore ▶</button>
         <button class="go" id="sendBtn" onclick="wsend()">send</button>
       </div>
     </div>
@@ -132,9 +136,10 @@ function autogrow(el){el.style.height='auto';el.style.height=Math.min(el.scrollH
 $('w').addEventListener('input',e=>autogrow(e.target));
 
 // ---- busy state drives the buttons (no dead 40s) ----
-let workerBusy=false;
+let workerBusy=false, consultBusy=false;
 function paintButtons(){
   $('sendBtn').disabled=workerBusy; $('exploreBtn').disabled=workerBusy;
+  const a=$('askBtn'); a.disabled=consultBusy; a.textContent=consultBusy?'reader…':'ask reader ▶';
 }
 
 // ---- left: reader mirror. Long turns (the brief) collapse to a summary ----
@@ -212,7 +217,10 @@ ev.onmessage = e => {
       break; }
     case 'mirror': renderMirror(m.turns); break;
     case 'consult':
-      if(m.status==='waiting'){ if(workerBusy) $('wstate').textContent=`reader 考え中… ${m.secs}s`; break; }
+      if(m.status==='start') { consultBusy=true; paintButtons(); }
+      if(m.status==='done'||m.status==='error') { consultBusy=false; paintButtons(); }
+      if(m.status==='waiting'){ $('askBtn').textContent=`reader… ${m.secs}s`;
+        if(workerBusy) $('wstate').textContent=`reader 考え中… ${m.secs}s`; break; }
       traffic(`<span class="rnd">consult</span> ${esc(m.status)}${m.repo?' · '+esc(m.repo):''}${m.detail?' · '+esc(m.detail):''}`, 'consult');
       break;
     case 'explore':
@@ -269,6 +277,15 @@ function wsend(){
 function explore(){
   const task = $('w').value.trim(); if(!task||workerBusy) return;
   post('/worker-explore', {repo:$('repo').value.trim(), task}); $('w').value=''; autogrow($('w'));
+}
+function askReader(){
+  const question = $('w').value.trim(); if(!question||consultBusy) return;
+  consultBusy=true; paintButtons();
+  post('/consult', {repo:$('repo').value.trim(), question}).then(r=>{
+    if(r&&r.error){ consultBusy=false; paintButtons();
+      traffic('consult error: '+esc(r.error)+(r.detail?' — '+esc(r.detail):''),'served'); }
+  });
+  $('w').value=''; autogrow($('w'));
 }
 function forward(btn){ if(btn){btn.disabled=true; btn.textContent='forwarded ✓';} post('/forward', {}); }
 
