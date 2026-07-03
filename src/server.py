@@ -25,6 +25,7 @@ import json
 import os
 import queue
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -600,6 +601,28 @@ def _run_worker_explore(repo: str, task: str) -> None:
             _worker_busy = False
 
 
+def _pick_repo_native():
+    """Open the native macOS folder chooser (Finder dialog) and return the
+    picked POSIX path. The server runs locally, so it can do what the browser
+    sandbox cannot: hand a real filesystem path back to the UI.
+    Returns (http_status, payload)."""
+    if sys.platform != "darwin":
+        return 501, {"error": "native picker is macOS-only — type the path"}
+    script = ('POSIX path of (choose folder with prompt '
+              '"repo を選択 (worker / reader が読む対象)")')
+    try:
+        r = subprocess.run(["/usr/bin/osascript", "-e", script],
+                           capture_output=True, text=True, timeout=180)
+    except subprocess.TimeoutExpired:
+        return 408, {"error": "picker timed out"}
+    if r.returncode != 0:          # user hit キャンセル (osascript exits -128 text)
+        return 200, {"cancelled": True}
+    path = r.stdout.strip().rstrip("/")
+    if not os.path.isdir(path):
+        return 400, {"error": f"not a dir: {path}"}
+    return 200, {"path": path}
+
+
 def _forward_to_worker() -> dict:
     """Human handoff: inject ONLY the reader's last answer (capped) into the
     worker history as context. Repo file bodies never travel this path."""
@@ -678,7 +701,8 @@ class Handler(BaseHTTPRequestHandler):
                                  "default_repo": DEFAULT_REPO,
                                  "worker_model": wcfg.model if wcfg else "",
                                  "reader_mode": rmode,
-                                 "reader_model": rmodel})
+                                 "reader_model": rmodel,
+                                 "can_pick": sys.platform == "darwin"})
         elif self.path == "/events":
             self._sse()
         else:
@@ -750,6 +774,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(202, {"queued": True, "repo": repo})
         elif self.path == "/forward":
             self._json(200, _forward_to_worker())
+        elif self.path == "/pick-repo":
+            self._json(*_pick_repo_native())
         else:
             self._json(404, {"error": "not found"})
 
