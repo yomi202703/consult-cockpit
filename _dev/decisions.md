@@ -2,6 +2,29 @@
 
 過去エントリは書き換えない。
 
+## 2026-07-03 auto-compact（worker window 限界への答え）＋セッション削除＋scroll 修正
+
+- オーナー「うちらの課題は gemma の window に限界があるってこと。どうするべき？」
+  「機能は完全に claude code 寄りにしたい。セッション削除も」。
+- window への答え = Claude Code と同じ auto-compact。既存の3層防御(repo 本文は履歴に
+  入らない/ツールラウンド transient/8KB cap)で残る唯一の穴が「会話履歴自体の成長」
+  だった。履歴推定が予算(WORKER_LLM_CONTEXT、既定16000tok)の7割(COMPACT_AT)を超えたら、
+  直近 COMPACT_KEEP_TURNS(6) を残して古いターンを worker 自身の transient 呼び出しで
+  1つの [Earlier conversation, compacted] ターンに畳む。要約失敗時は畳まない
+  (housekeeping で会話を壊さない)。トークン推定は bytes/3(和英混在の安全側)。
+  UI: header に context % メーター(70%で橙)、圧縮時は「🗜 古い会話を1つの要約に圧縮」note。
+- セッション削除: POST /session-delete {id}。active を削除すると landing に戻る
+  (busy 中は 409)。UI はサイドバー項目 hover で ✕、confirm 後に削除。
+- scroll 不具合(オーナー報告): 回答カード(.rawans pre max-height 280)と tool カード
+  (.tbody max-height 340)の入れ子スクロールがホイールを横取りし「ページが動かない」
+  と感じさせていた。ChatGPT 同様「ページが唯一のスクローラー」に — 入れ子 scrollbox 全廃、
+  renderConsultMirror の scrollIntoView も削除(ページを引っ張る)。
+- テスト: test_A(削除→一覧から消える→active なら view リセット)、test_B(専用サーバを
+  WORKER_LLM_CONTEXT=300 で立て、5ターンで [compacted] ターン1つに畳まれ履歴が縮むこと。
+  compaction は履歴を縮めるので「長さ増加」でなくターン固有マーカーで待つのが要点)。23本緑。
+- 教訓: 「小さいモデルで大きい repo を扱う」ツールの完成条件は、repo 側のオフロード
+  だけでなく会話側の圧縮も揃うこと。両輪で初めて window 限界に答えたことになる。
+
 ## 2026-07-03 セッション永続化＋左サイドバー（Claude Code の「最近の項目」）
 
 - オーナー「過去のセッションを左サイドに乗せることはできないんですか？claude code みたいに」。

@@ -59,6 +59,12 @@ bash ~/.claude/lib/consult-cockpit/run.sh
 リロード時は worker の会話履歴(あなたの発言と最終回答)だけ復元される。tool カードは
 その場限りの観測で、正本は履歴のほう。`POST /consult` は API としても残る。
 
+worker の context window が細くても長く使える仕組み（両輪）:
+- repo 側: 本文は履歴に入らない（下の不変条件）
+- 会話側: 履歴が window 予算（`WORKER_LLM_CONTEXT`、既定16000トークン相当）の7割を
+  超えると、古いターンを自動で1つの要約に圧縮（Claude Code の auto-compact と同じ）。
+  ヘッダーの context % が現在の使用率。
+
 ## 設計の肝(死守する不変条件)
 
 repo の本文は worker の会話履歴に絶対に入れない。fetch も consult も各ツールラウンドは

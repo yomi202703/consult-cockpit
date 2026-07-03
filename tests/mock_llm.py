@@ -22,6 +22,7 @@ FETCH_REPLY = "I'll look at the repo first.\n```fetch\nREAD README.md\n```"
 FINAL_REPLY = "MOCK-ANSWER: read the file; everything checks out."
 CONSULT_REPLY = "```consult\nWhat is in the readme?\n```"
 SYNTH_REPLY = "MOCK-SYNTH: per the reader, the readme checks out."
+SUMMARY_REPLY = "MOCK-SUMMARY: earlier chat, compacted."
 CHAT_REPLY = "MOCK-CHAT: hello from the mock."
 
 
@@ -37,6 +38,8 @@ def pick_reply(messages):
     for m in messages:
         if m.get("role") != "system":
             last = m.get("content", "")
+    if last.startswith("Compact this conversation"):  # auto-compact housekeeping
+        return SUMMARY_REPLY
     if "[Reader's answer]" in last:
         return SYNTH_REPLY
     if "Here are the requested contents" in last:   # a fetch/explore round served

@@ -212,6 +212,68 @@ class E2ETest(unittest.TestCase):
         code, _ = post_json(self.url + "/session", {"id": "ffff"})
         self.assertEqual(code, 404)                      # unknown id
 
+    def test_A_delete_session(self):
+        code, body = post_json(self.url + "/session", {"repo": self.tmp.name})
+        sid = body["id"]
+        post_json(self.url + "/worker", {"message": "to be deleted"})
+        self.assertTrue(wait_until(lambda: len(self.state()["worker"]) >= 2))
+        code, body = post_json(self.url + "/session-delete", {"id": sid})
+        self.assertEqual(code, 200)
+        self.assertTrue(body["cleared"])                 # was active → view resets
+        s = self.state()
+        self.assertEqual(s["session_repo"], "")
+        self.assertEqual(s["worker"], [])
+        self.assertNotIn(sid, [x["id"] for x in
+                               get_json(self.url + "/sessions")["sessions"]])
+
+    def test_B_autocompact_folds_old_turns(self):
+        """With a tiny context budget, a long history gets folded into one
+        summary turn before the next reply (the Claude Code compaction model)."""
+        port = free_port()
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith(("WORKER_LLM_", "READER_LLM_", "COCKPIT_"))}
+        base = f"http://127.0.0.1:{self.mock_port}/v1"
+        env.update({"WORKER_LLM_BASE_URL": base, "WORKER_LLM_MODEL": "mock",
+                    "COCKPIT_ENV": os.devnull, "COCKPIT_SCRIPTS": "/nonexistent",
+                    "COCKPIT_PORT": str(port), "COCKPIT_REPO": self.tmp.name,
+                    "COCKPIT_STATE": self.tmp.name,
+                    "WORKER_LLM_CONTEXT": "300"})       # tiny budget → compacts fast
+        srv = subprocess.Popen(
+            [sys.executable, os.path.join(ROOT, "src", "server.py")], env=env,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        url = f"http://127.0.0.1:{port}"
+        def up():
+            try:
+                get_json(url + "/state")
+                return True
+            except Exception:
+                return False
+        try:
+            self.assertTrue(wait_until(up, timeout=10))
+            code, _ = post_json(url + "/session", {"repo": self.tmp.name})
+            self.assertEqual(code, 200)
+            pad = "padding たっぷりの長い発言です。" * 10   # ~400 bytes/turn
+            for i in range(5):
+                post_json(url + "/worker", {"message": f"turn {i} {pad}"})
+                # compaction may SHRINK the history, so wait on this turn's
+                # marker being answered, not on the length growing
+                self.assertTrue(wait_until(lambda: (
+                    h := get_json(url + "/state")["worker"],
+                    bool(h) and h[-1]["role"] == "assistant" and
+                    any(f"turn {i} " in m["content"] for m in h))[-1]))
+            hist = get_json(url + "/state")["worker"]
+            heads = [m for m in hist
+                     if m["content"].startswith("[Earlier conversation, compacted]")]
+            self.assertEqual(len(heads), 1)              # folded into ONE summary turn
+            self.assertIn("MOCK-SUMMARY", heads[0]["content"])
+            self.assertLess(len(hist), 10)               # actually shrank
+        finally:
+            srv.terminate()
+            try:
+                srv.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                srv.kill()
+
     def test_7_worker_fetches_repo_itself_transiently(self):
         """Autonomous repo read: when the message needs files, the worker emits
         a ```fetch block, the server serves the repo LOCALLY, and the worker

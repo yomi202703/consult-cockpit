@@ -68,6 +68,13 @@ MAX_CONSULT_ROUNDS = 8
 WORKER_EXPLORE_ROUNDS = 4     # keep it snappy: the worker explores locally in few rounds
 WORKER_TOOL_ROUNDS = 5        # chat: max fetch/consult tool rounds before forcing an answer
 CONSULT_WAIT_CAP = 150        # per-round wait cap (s) — interactive: fail visibly, don't hang 5 min
+# The worker's context window is finite (a small local model is the point of
+# this tool). Auto-compact: when the history estimate crosses COMPACT_AT of
+# the budget, older turns are folded into one summary turn (Claude Code's
+# model). Budget is tokens, override per deployment.
+WORKER_CONTEXT_TOKENS = int(os.environ.get("WORKER_LLM_CONTEXT", "16000"))
+COMPACT_AT = 0.7              # compact when est. usage crosses this fraction
+COMPACT_KEEP_TURNS = 6        # most-recent turns kept verbatim
 
 _FENCE_RE = re.compile(r"```([\w-]*)\s*\n(.*?)```", re.DOTALL)
 
@@ -230,6 +237,44 @@ def worker_snapshot() -> list[dict]:
         return list(_worker_history)
 
 
+def _est_tokens(msgs) -> int:
+    """Rough token estimate (bytes/3 — safe-side for mixed JA/EN)."""
+    return sum(len((m.get("content") or "").encode()) for m in msgs) // 3
+
+
+def _ctx_pct_locked() -> int:
+    """Estimated context usage percent. Caller holds _state_lock."""
+    return min(100, _est_tokens(_worker_history) * 100 // WORKER_CONTEXT_TOKENS)
+
+
+def _maybe_compact(history):
+    """Auto-compact (Claude Code's model): when the history estimate crosses
+    COMPACT_AT of the worker's context budget, fold everything but the last
+    COMPACT_KEEP_TURNS turns into one dense summary turn via a transient
+    worker call. Returns the new history, or None when no compaction is due
+    (or the summary call failed — never break the chat over housekeeping)."""
+    if _est_tokens(history) < WORKER_CONTEXT_TOKENS * COMPACT_AT:
+        return None
+    if len(history) <= COMPACT_KEEP_TURNS + 2:
+        return None                     # nothing meaningfully old to fold
+    old, recent = history[:-COMPACT_KEEP_TURNS], history[-COMPACT_KEEP_TURNS:]
+    convo = "\n\n".join(f"[{m['role']}]\n{m['content']}" for m in old)
+    ask = [{"role": "user", "content":
+            "Compact this conversation into a dense summary (at most 400 "
+            "words) that preserves facts, decisions, file and path names, "
+            "numbers, and open questions. Reply with the summary only.\n\n"
+            + convo}]
+    try:
+        summary = "".join(stream_chat(ask, max_tokens=1024)).strip()
+    except Exception:  # noqa: BLE001
+        return None
+    if not summary:
+        return None
+    head = {"role": "user",
+            "content": "[Earlier conversation, compacted]\n\n" + summary}
+    return [head] + recent
+
+
 def _persist_locked():
     """Write the current session to disk (atomic). Caller holds _state_lock.
     Nothing is written until the first turn, so abandoned empty sessions
@@ -313,6 +358,34 @@ def start_session(repo: str = "", sid: str = ""):
 def session_repo() -> str:
     with _state_lock:
         return _session_repo
+
+
+def delete_session(sid: str):
+    """Remove a saved session. Deleting the ACTIVE session also clears the
+    conversation (back to the landing screen). Returns (http_status, payload)."""
+    global _session_id, _session_repo, _last_reader_answer
+    if not re.fullmatch(r"[0-9a-f]+", sid or ""):
+        return 400, {"error": "bad session id"}
+    with _state_lock:
+        if sid == _session_id and _worker_busy:
+            return 409, {"error": "worker busy — wait for the current reply"}
+    try:
+        os.remove(os.path.join(SESSIONS_DIR, sid + ".json"))
+    except FileNotFoundError:
+        pass                        # unsaved (empty) active session — still clearable
+    except OSError as e:
+        return 500, {"error": repr(e)}
+    cleared = False
+    with _state_lock:
+        if sid == _session_id:
+            _session_id = ""
+            _session_repo = ""
+            _worker_history.clear()
+            _last_reader_answer = ""
+            cleared = True
+    if cleared:
+        broadcast("session", {"id": "", "repo": "", "name": ""})
+    return 200, {"deleted": sid, "cleared": cleared}
 
 
 # =============================================================================
@@ -589,6 +662,17 @@ def _run_worker(user_msg: str, repo: str = "") -> None:
         _persist_locked()
         history = list(_worker_history)
     broadcast("worker", {"status": "start", "role": "user", "content": user_msg})
+    # housekeeping before the turn: fold old turns if the window is filling up
+    if _est_tokens(history) >= WORKER_CONTEXT_TOKENS * COMPACT_AT:
+        broadcast("worker", {"status": "compacting"})
+        compacted = _maybe_compact(history)
+        if compacted is not None:
+            with _state_lock:
+                _worker_history[:] = compacted
+                _persist_locked()
+                history = list(_worker_history)
+                pct = _ctx_pct_locked()
+            broadcast("worker", {"status": "compacted", "ctx": pct})
     root = os.path.abspath(os.path.expanduser(repo or DEFAULT_REPO))
     reader_avail = _API_READER0 is not None or nav is not None
     system = [{"role": "system", "content": worker_system(reader_avail, root)}]
@@ -638,7 +722,8 @@ def _run_worker(user_msg: str, repo: str = "") -> None:
         with _state_lock:
             _worker_history.append({"role": "assistant", "content": final})
             _persist_locked()
-        broadcast("worker", {"status": "done", "content": final})
+            pct = _ctx_pct_locked()
+        broadcast("worker", {"status": "done", "content": final, "ctx": pct})
     except Exception as e:  # noqa: BLE001
         broadcast("worker", {"status": "error", "detail": repr(e)})
     finally:
@@ -803,6 +888,7 @@ class Handler(BaseHTTPRequestHandler):
                                  "default_repo": DEFAULT_REPO,
                                  "session_repo": _session_repo,
                                  "session_id": _session_id,
+                                 "context_pct": _ctx_pct_locked(),
                                  "worker_model": wcfg.model if wcfg else "",
                                  "reader_mode": rmode,
                                  "reader_model": rmodel,
@@ -850,6 +936,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/session":
             return self._json(*start_session(repo=body.get("repo") or "",
                                              sid=body.get("id") or ""))
+        elif self.path == "/session-delete":
+            return self._json(*delete_session(body.get("id") or ""))
         elif self.path == "/consult":
             repo = body.get("repo") or session_repo() or DEFAULT_REPO
             question = (body.get("question") or "").strip()

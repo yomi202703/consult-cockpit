@@ -26,9 +26,15 @@
           text-align:left;margin-bottom:14px}
   .newbtn:hover{background:#f2f2f2}
   .shead{font-size:11px;color:var(--dim);font-weight:700;padding:0 6px 6px}
-  .sitem{border-radius:8px;padding:6px 8px;cursor:pointer;margin-bottom:2px}
+  .sitem{border-radius:8px;padding:6px 8px;cursor:pointer;margin-bottom:2px;
+         display:flex;align-items:center;gap:4px}
+  .sitem .si{flex:1;min-width:0}
   .sitem:hover{background:#efefef}
   .sitem.active{background:#ececf6}
+  .sx{flex:0 0 auto;color:#c0c0c0;font-size:12px;padding:2px 5px;border-radius:6px;
+      visibility:hidden}
+  .sitem:hover .sx{visibility:visible}
+  .sx:hover{color:#d1453b;background:#fbe9e8}
   .sitem .st{font-size:12.5px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;
              white-space:nowrap}
   .sitem .ss{font-size:10.5px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;
@@ -70,7 +76,9 @@
   .tool summary::before{content:'▸ ';color:#c0c0c0}
   .tool[open] summary::before{content:'▾ ';color:#c0c0c0}
   .tool summary:hover{color:var(--ink)}
-  .tool .tbody{border-top:1px solid var(--edge);padding:10px 16px;max-height:340px;overflow-y:auto;background:#fff}
+  /* no nested scrollboxes: the page is the only scroller (a scrollable box
+     inside the chat traps the wheel and makes page scrolling feel broken) */
+  .tool .tbody{border-top:1px solid var(--edge);padding:10px 16px;background:#fff}
   .tool .act{color:var(--dim);font-size:12px;padding:2px 0}
   .tool .act code{color:var(--star);font-size:11px;word-break:break-all}
   /* reader turns inside an expanded consult card */
@@ -93,7 +101,8 @@
   .rawans .bar button:hover:not(:disabled){background:#f2f2f2}
   .rawans .bar button:disabled{opacity:.5;cursor:default}
   .rawans pre{margin:0;padding:10px 16px;white-space:pre-wrap;word-break:break-word;
-              font:inherit;font-size:14px;max-height:280px;overflow-y:auto}
+              font:inherit;font-size:14px}
+  .note{color:#a3a3a3;font-size:12px;text-align:center;margin:0 0 18px}
 
   /* ---- status + composer ---- */
   .footwrap{flex:0 0 auto;padding:0 20px}
@@ -154,6 +163,7 @@
 <header>
   <b>consult cockpit</b>
   <span class="sub" id="wlabel">worker</span>
+  <span class="sub" id="ctx" title="worker の context window 使用率(推定)。7割で自動圧縮"></span>
   <span class="lbl" id="repoName" title=""></span>
   <span id="status" class="bad"><span class="dot"></span>…</span>
 </header>
@@ -227,6 +237,16 @@ function sysline(text){
   const d=document.createElement('div'); d.className='sys'; d.textContent=text;
   feed.appendChild(d); if(stick) scrollDown();
 }
+function noteline(text){
+  const stick=atBottom();
+  const d=document.createElement('div'); d.className='note'; d.textContent=text;
+  feed.appendChild(d); if(stick) scrollDown();
+}
+function setCtx(pct){
+  if(pct===undefined||pct===null) return;
+  const el=$('ctx'); el.textContent='context '+pct+'%';
+  el.style.color = pct>=70 ? '#c2680c' : '';
+}
 
 // ---- tool cards ----
 // fetch card: the worker read the repo itself (one card per tool round)
@@ -275,7 +295,6 @@ function renderConsultMirror(turns){
                      .map((d,i)=>d.open?i:-1).filter(i=>i>=0));
   consult.mirror.innerHTML=(turns||[]).map(rturnHTML).join('');
   [...consult.mirror.querySelectorAll('details')].forEach((d,i)=>{ if(open.has(i)) d.open=true; });
-  if(consult.det.open) consult.mirror.scrollIntoView({block:'nearest'});
 }
 // direct-consult raw answer card, with hand-to-worker action
 function rawAnswerCard(text){
@@ -340,10 +359,20 @@ async function loadSessions(){
     if(!list.length){ $('slist').innerHTML='<div class="sempty">まだありません</div>'; return; }
     $('slist').innerHTML = list.map(s=>
       `<div class="sitem${s.id===curSid?' active':''}" onclick="resumeSession('${s.id}')" title="${esc(s.repo)}">
-         <div class="st">${esc(s.title||'(無題)')}</div>
-         <div class="ss">📁 ${esc(s.name)} · ${rel(s.updated)}</div>
+         <div class="si">
+           <div class="st">${esc(s.title||'(無題)')}</div>
+           <div class="ss">📁 ${esc(s.name)} · ${rel(s.updated)}</div>
+         </div>
+         <span class="sx" onclick="delSession(event,'${s.id}')" title="このセッションを削除">✕</span>
        </div>`).join('');
   }catch(_){}
+}
+async function delSession(e, id){
+  e.stopPropagation();
+  if(!confirm('このセッションを削除しますか？')) return;
+  const r = await post('/session-delete', {id});
+  if(r.error) alert(r.error);
+  loadSessions();   // if it was the active one, the SSE session event resets the view
 }
 
 // ---- labels from live config ----
@@ -354,6 +383,7 @@ fetch('/state').then(r=>r.json()).then(s=>{
   if(!s.can_pick) $('lpickBtn').style.display='none';
   curSid = s.session_id||'';
   loadSessions();
+  setCtx(s.context_pct);
   if(s.session_repo) showChat(s.session_repo);          // mid-session reload
   else {
     showLanding();
@@ -419,11 +449,14 @@ ev.onmessage = e => {
       // worker-mediated consult: skip — the worker's synthesis streams next.
       if(consult && consult.direct) rawAnswerCard(m.text||'');
       break;
-    case 'session': {        // a session started/resumed (any tab) — single render path
+    case 'session': {        // a session started/resumed/cleared (any tab) — single render path
       curSid = m.id||'';
-      resetFeed(); showChat(m.repo);
+      resetFeed();
+      if(!m.repo){ showLanding(); loadSessions(); break; }   // active session deleted
+      showChat(m.repo);
       fetch('/state').then(r=>r.json()).then(s=>{     // replay the resumed history
         (s.worker||[]).forEach(t=>turn(t.role, t.content));
+        setCtx(s.context_pct);
       }).catch(()=>{});
       loadSessions();
       break; }
@@ -456,8 +489,10 @@ function onWorker(m){
     case 'delta':
       if(!wCur){ wCur = turn('assistant',''); fetchCard=null; }
       wCur.textContent += m.content; if(atBottom()) scrollDown(); break;
+    case 'compacting': pill(spin('古い会話を圧縮中…')); break;
+    case 'compacted': noteline('🗜 古い会話を1つの要約に圧縮しました'); setCtx(m.ctx); break;
     case 'done': wCur=null; fetchCard=null; workerBusy=false; pill(''); paintButtons();
-      loadSessions(); break;   // title/updated may have changed
+      setCtx(m.ctx); loadSessions(); break;   // title/updated may have changed
     case 'busy': pill('busy — 前の応答を待って'); break;
     case 'error': wCur=null; fetchCard=null; workerBusy=false; paintButtons();
       pill(''); sysline('worker error: '+(m.detail||'')); break;
