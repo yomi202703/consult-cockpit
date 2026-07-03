@@ -2,6 +2,29 @@
 
 過去エントリは書き換えない。
 
+## 2026-07-03 explore をボタンから外し worker の自律 fetch ツールに（＋ask reader ボタン）
+
+- オーナー指摘: 「gemma が操作するなら explore を UI に出す必要なくね？」。consult を
+  worker のツールにした論理の延長 — repo を読むのが worker 自身なら、人間がボタンを
+  押すのは不自然。答えるのに要れば worker が勝手に読むべき。オーナー選択=「必要なら自動で読む」。
+- 変更: worker に2ツールを常備（worker_system() を per-call 注入、履歴に残さない）。
+  - fetch(自律・安い): 答えに repo が要れば worker が ```fetch を出す。STRICT 判定
+    (parse_fetch_block、```fetch フェンスのみ) — 散文中の "READ" で誤発火しない
+    （緩い parse_fetch_text は /worker-explore 専用に残置）。reader 不要で常に使える。
+  - consult(明示・高い): 従来通り「ChatGPTに聞いて」の時だけ。
+  統一ループ _run_worker: working=system+履歴 を transient に持ち、fetch/consult の各
+  ラウンドは working にのみ積む。永続履歴に残すのは user turn と最終回答だけ = 不変条件を
+  chat 全体に一般化（従来 consult の [Reader's answer] も transient 化し、より痩せた）。
+  ツール budget(WORKER_TOOL_ROUNDS=5)超過で最終回答を強制。
+- UI: explore ボタン削除（send 1本＋直接質問用の ask reader ▶ は残す）。ツール呼び出しは
+  streaming バブルを検出後にコンパクトな 🔧 行へ畳む(toolcall イベント)。左は純ミラーのまま。
+- テスト: mock を「最後のメッセージ」ルーティングに変更 — 永続履歴が全テストで累積し、
+  古い "please ask the reader" が後続の plain chat を consult に化けさせる汚染を解消
+  （ツール応答も現在意図も常に最新メッセージに来るため最後だけ見れば十分）。test_7 追加
+  (worker 自律 fetch＋repo 本文が永続履歴に入らないこと)。実機で env.py を自分で読み正答を確認。
+- 教訓: 「誰が操作するか」で UI 面を決める。worker が操作主体のものは人間ボタンにしない
+  （consult も explore も同じ結論）。安い読み=自律、高い外注=明示、の非対称が一貫方針。
+
 ## 2026-07-03 consult の「固まって見える」修正（無言待機＋古答え返し）
 
 - 症状(オーナー実機): worker 経由 consult で reader(web ChatGPT)が空応答を返すと、

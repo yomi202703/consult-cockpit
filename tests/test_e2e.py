@@ -153,7 +153,9 @@ class E2ETest(unittest.TestCase):
     def test_5_worker_consults_reader_on_explicit_request(self):
         """The one-input UX: telling the worker to ask the reader triggers the
         consult tool loop (worker -> ```consult -> reader run -> [Reader's
-        answer] -> worker synthesis), with the invariant intact."""
+        answer] fed back transiently -> worker synthesis). Persistent history
+        keeps only the user turn + the final synthesis; the raw reader answer
+        and repo bodies stay out of it (the offload invariant)."""
         code, _ = post_json(self.url + "/worker",
                             {"message": "please ask the reader about the readme",
                              "repo": self.tmp.name})
@@ -161,12 +163,38 @@ class E2ETest(unittest.TestCase):
         self.assertTrue(wait_until(lambda: any(
             "MOCK-SYNTH" in m["content"] for m in self.state()["worker"])))
         joined = "\n".join(m["content"] for m in self.state()["worker"])
-        self.assertIn("[Reader's answer]", joined)     # answer text crossed
-        self.assertNotIn("mock repo readme", joined)   # repo bodies did not
+        self.assertIn("MOCK-SYNTH", joined)             # worker used the answer
+        self.assertNotIn("[Reader's answer]", joined)   # but it stays transient
+        self.assertNotIn("mock repo readme", joined)    # repo bodies never cross
 
     def test_6_gone_alias_is_404(self):
         code, _ = post_json(self.url + "/gemma", {"message": "x"})
         self.assertEqual(code, 404)
+
+    def test_7_worker_fetches_repo_itself_transiently(self):
+        """Autonomous repo read: when the message needs files, the worker emits
+        a ```fetch block, the server serves the repo LOCALLY, and the worker
+        answers — but repo bodies stay in the transient context. Persistent
+        history keeps only the user turn + the final answer (no explore button,
+        no reader involved)."""
+        before = len(self.state()["worker"])
+        code, _ = post_json(self.url + "/worker",
+                            {"message": "inspect the repo and summarize it",
+                             "repo": self.tmp.name})
+        self.assertEqual(code, 202)
+        # wait for THIS turn's answer (MOCK-ANSWER also lingers in earlier tests'
+        # history, so match only within the new slice)
+        self.assertTrue(wait_until(lambda: any(
+            "MOCK-ANSWER" in m["content"]
+            for m in self.state()["worker"][before:])))
+        new = self.state()["worker"][before:]           # only this turn's additions
+        joined = "\n".join(m["content"] for m in new)
+        self.assertIn("MOCK-ANSWER", joined)            # worker answered from files
+        # the fetch round is transient: neither the tool call nor the served
+        # repo bodies persist — the offload invariant holds in chat, not just consult
+        self.assertNotIn("mock repo readme", joined)
+        self.assertNotIn("```fetch", joined)
+        self.assertNotIn("Here are the requested contents", joined)
 
 
 if __name__ == "__main__":

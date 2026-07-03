@@ -24,22 +24,28 @@ is in README.md and SKILL.md; this file is only what a fresh session gets wrong.
 
 ## The one invariant that must not break
 Raw repo file bodies never enter the worker's PERSISTENT chat history.
+- Every tool round (the worker's own fetch, the reader consult, the served
+  contents) lives in a TRANSIENT working list inside `_run_worker`; only the
+  user turn and the final answer join `_worker_history`.
 - consult (the reader reads): `run_commands` output goes only to the reader tab
-  and the middle lane — never to the worker.
+  and the middle lane — never to the worker's persistent history.
 - forward: crosses only the reader's answer text, capped 8KB.
-- explore (the worker reads locally): the deliberate exception — repo bytes enter
-  a TRANSIENT sub-context that is discarded; only the distilled final answer joins
-  the persistent history.
-Touch the explore loop or `/forward` → preserve this. It is why the worker's small
-context survives. Rationale: `_dev/decisions.md` (2026-07-01).
+Touch `_run_worker`, the explore loop, or `/forward` → preserve this. It is why
+the worker's small context survives. Rationale: `_dev/decisions.md` (2026-07-01,
+2026-07-03).
 
 ## Conventions a newcomer gets wrong
-- The human talks ONLY to the worker; consult is the worker's tool, not a human
-  button. WORKER_SYSTEM (server.py) instructs it to emit a ```consult block on
-  the user's EXPLICIT request only; the server intercepts it (parse_consult_text
-  → consult_once), feeds back the answer capped like /forward, and the worker
-  synthesizes. The system prompt is injected per-call, never stored in history.
-  Touching that loop → preserve the invariant above.
+- The human talks ONLY to the worker (one input, plus the `ask reader ▶` button
+  for a direct consult). The worker has two tools (worker_system() in server.py,
+  injected per-call, never stored):
+  - fetch — reads the repo ITSELF whenever answering needs files (autonomous,
+    cheap). STRICT trigger: only a real ```fetch fence counts (parse_fetch_block),
+    so prose that mentions READ never fires a read. There is no explore button;
+    the worker just reads. `/worker-explore` remains as a programmatic entry.
+  - consult — asks the stronger reader, only on the user's EXPLICIT request
+    (parse_consult_text → consult_once), answer fed back capped like /forward.
+  Both tool rounds are transient (see the invariant). Touching that loop →
+  preserve the invariant above.
 - All runtime code lives in `src/` (server / llm_client / env / secrets_store /
   repo_fetch + static); the repo root holds only entry/meta (`run.sh`, README,
   SKILL, CLAUDE). Put new modules in `src/`, not the root.

@@ -26,23 +26,27 @@ CHAT_REPLY = "MOCK-CHAT: hello from the mock."
 
 
 def pick_reply(messages):
-    """Deterministic routing. Order matters:
-    1. reader's answer already came back      -> worker synthesizes
-    2. a repo brief is present (File tree:)   -> reader/explore path:
-       served contents yet? final answer : one fetch round
-    3. the user asked to consult the reader   -> worker emits the tool block
-    4. plain chat
-    System messages are excluded: the worker's system prompt itself mentions
-    the tool markers ('[Reader's answer]', consult blocks), so scanning it
-    would misroute every worker call."""
-    text = "\n".join(m.get("content", "") for m in messages
-                     if m.get("role") != "system")
-    if "[Reader's answer]" in text:
+    """Deterministic routing off the LAST non-system message only. A tool result
+    (reader answer / fetched contents / explore brief) always arrives as the most
+    recent message, and a fresh user turn is likewise the last message — so the
+    last message alone decides the reply. Scanning the whole conversation would
+    misroute, because the persistent history accumulates across turns/tests and
+    an old 'please ask the reader' would hijack a later plain chat. System
+    messages are skipped: the worker's system prompt itself lists the markers."""
+    last = ""
+    for m in messages:
+        if m.get("role") != "system":
+            last = m.get("content", "")
+    if "[Reader's answer]" in last:
         return SYNTH_REPLY
-    if "File tree:" in text:
-        return FINAL_REPLY if "Here are the requested contents" in text else FETCH_REPLY
-    if "please ask the reader" in text:
+    if "Here are the requested contents" in last:   # a fetch/explore round served
+        return FINAL_REPLY
+    if "File tree:" in last:                         # explore brief, pre-serve
+        return FETCH_REPLY
+    if "please ask the reader" in last:              # -> worker consult block
         return CONSULT_REPLY
+    if "inspect the repo" in last:                   # -> worker chat fetch block
+        return FETCH_REPLY
     return CHAT_REPLY
 
 

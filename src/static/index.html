@@ -36,6 +36,10 @@
   .turn.user .role{color:var(--user)}
   .turn.assistant .role{color:var(--reader)}
   .turn pre{margin:0;white-space:pre-wrap;word-break:break-word;font:inherit}
+  .turn.toolline{margin-bottom:8px}
+  .turn.toolline .role{display:none}
+  .turn.toolline pre{font-size:11px;color:var(--dim);border-left:2px solid var(--worker);padding-left:7px}
+  .turn.toolline pre::before{content:'🔧 '}
   .turn details summary{cursor:pointer;color:var(--dim);list-style:none}
   .turn details summary::before{content:'▸ ';color:var(--dim)}
   .turn details[open] summary::before{content:'▾ '}
@@ -114,12 +118,10 @@
     <h2>worker <small id="wstate">idle</small></h2>
     <div class="body" id="worker"></div>
     <div class="foot col">
-      <textarea id="w" rows="1" placeholder="worker に話す… (Enter=send / Shift+Enter=改行)"></textarea>
+      <textarea id="w" rows="1" placeholder="worker に話す… 必要なら自分で repo を読む (Enter=send / Shift+Enter=改行)"></textarea>
       <div class="btnrow">
         <button class="ask" id="askBtn" onclick="askReader()"
           title="↑の入力を質問として reader(強いモデル)に repo を読ませて聞く">ask reader ▶</button>
-        <button id="exploreBtn" onclick="explore()"
-          title="↑の入力をタスクとして、worker 自身が repo をローカル探索する">explore ▶</button>
         <button class="go" id="sendBtn" onclick="wsend()">send</button>
       </div>
     </div>
@@ -138,7 +140,7 @@ $('w').addEventListener('input',e=>autogrow(e.target));
 // ---- busy state drives the buttons (no dead 40s) ----
 let workerBusy=false, consultBusy=false;
 function paintButtons(){
-  $('sendBtn').disabled=workerBusy; $('exploreBtn').disabled=workerBusy;
+  $('sendBtn').disabled=workerBusy;
   const a=$('askBtn'); a.disabled=consultBusy; a.textContent=consultBusy?'reader…':'ask reader ▶';
 }
 
@@ -255,6 +257,10 @@ function onWorker(m){
     case 'consulting':
       wCur=null; $('wstate').textContent='consulting reader…'; break;
     case 'exploring': workerBusy=true; $('wstate').textContent = `exploring… round ${m.round}`; paintButtons(); break;
+    case 'toolcall':
+      if(wCur){ wCur.textContent = m.summary; const t=wCur.closest('.turn'); if(t) t.classList.add('toolline'); }
+      wCur=null;
+      $('wstate').textContent = m.kind==='fetch' ? 'repo を読み中…' : 'consulting reader…'; break;
     case 'delta':
       if(!wCur) wCur = wTurn('assistant','');
       wCur.textContent += m.content; scroll($('worker')); break;
@@ -273,10 +279,6 @@ async function post(path, body){
 function wsend(){
   const message = $('w').value.trim(); if(!message||workerBusy) return;
   post('/worker', {message, repo:$('repo').value.trim()}); $('w').value=''; autogrow($('w'));
-}
-function explore(){
-  const task = $('w').value.trim(); if(!task||workerBusy) return;
-  post('/worker-explore', {repo:$('repo').value.trim(), task}); $('w').value=''; autogrow($('w'));
 }
 function askReader(){
   const question = $('w').value.trim(); if(!question||consultBusy) return;

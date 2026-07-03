@@ -65,38 +65,82 @@ DEFAULT_REPO = os.environ.get("COCKPIT_REPO") or os.getcwd()
 FORWARD_CAP = 8 * 1024        # max reader answer bytes handed to the worker
 MAX_CONSULT_ROUNDS = 8
 WORKER_EXPLORE_ROUNDS = 4     # keep it snappy: the worker explores locally in few rounds
+WORKER_TOOL_ROUNDS = 5        # chat: max fetch/consult tool rounds before forcing an answer
 CONSULT_WAIT_CAP = 150        # per-round wait cap (s) — interactive: fail visibly, don't hang 5 min
 
 _FENCE_RE = re.compile(r"```([\w-]*)\s*\n(.*?)```", re.DOTALL)
 
-# The worker's one tool: consult the reader on the user's explicit request.
-# Injected as a system message only while a reader is available; never stored
-# in the persistent history.
-WORKER_SYSTEM = (
-    "You are the worker assistant of a two-model cockpit over a code "
-    "repository. You have one tool.\n"
-    "When the user explicitly asks you to consult the reader (for example, "
-    "asks you to ask ChatGPT, the reader, or a stronger model), reply with "
-    "exactly one fenced code block tagged consult containing one "
-    "self-contained question in English about the repository, and nothing "
-    "else:\n"
+# The worker's tools, injected as a system message per call, never stored in
+# history. fetch (read the repo yourself, cheap) is always available; consult
+# (ask the stronger reader, slow) only when a reader exists.
+_WORKER_INTRO = (
+    "You are the worker assistant of a cockpit over a code repository at "
+    "the path given as 'Repo root'. You answer the user about this repo.\n"
+)
+_WORKER_FETCH_RULE = (
+    "TOOL fetch — read the repository yourself. Whenever answering needs to "
+    "see files, output EXACTLY ONE fenced code block tagged fetch, one command "
+    "per line, and nothing else:\n"
+    "```fetch\n"
+    "READ <relpath>            full file (capped)\n"
+    "READ <relpath> <a>-<b>    only lines a..b\n"
+    "GREP <regex> [reldir]     search file contents\n"
+    "LS [reldir]               list a directory\n"
+    "TREE [reldir]             tree under a directory\n"
+    "```\n"
+    "Paths are relative to the repo root. Ask only for what you need (<=8 "
+    "items). The contents come back in the next message; then either fetch "
+    "more or give your answer. Do not invent file contents — fetch to be sure. "
+    "Skip fetching for small talk.\n"
+)
+_WORKER_CONSULT_RULE = (
+    "TOOL consult — ask the stronger reader model to study the repo, but ONLY "
+    "when the user explicitly asks you to (e.g. asks you to ask ChatGPT, the "
+    "reader, or a stronger model). Then output EXACTLY ONE fenced block tagged "
+    "consult with one self-contained question in English, and nothing else:\n"
     "```consult\n<question>\n```\n"
-    "The reader explores the repository itself; do not paste file contents "
-    "into the question. When a later user message starts with "
-    "[Reader's answer], use it to answer the user in the conversation's "
-    "language. In every other case, converse normally and do not emit a "
-    "consult block."
+    "Do not paste file contents into the question; the reader reads the repo "
+    "itself. Its reply comes back as a message starting with [Reader's answer]."
+    "\n"
+)
+_WORKER_OUTRO = (
+    "Emit at most one tool block per reply, and nothing else in that reply. "
+    "Otherwise converse normally in the user's language."
 )
 
 
-def parse_consult_text(text: str):
-    """Return the question from a ```consult fenced block, or None."""
+def worker_system(reader_avail: bool, root: str) -> str:
+    parts = [_WORKER_INTRO, f"Repo root: {root}\n", _WORKER_FETCH_RULE]
+    if reader_avail:
+        parts.append(_WORKER_CONSULT_RULE)
+    parts.append(_WORKER_OUTRO)
+    return "".join(parts)
+
+
+def _parse_fenced(text: str, tag: str):
+    """Return the body of the first ```<tag> fenced block, or None."""
     for lang, body in _FENCE_RE.findall(text or ""):
-        if lang.lower() == "consult":
-            q = body.strip()
-            if q:
-                return q
+        if lang.lower() == tag:
+            b = body.strip()
+            if b:
+                return b
     return None
+
+
+def parse_consult_text(text: str):
+    return _parse_fenced(text, "consult")
+
+
+def parse_fetch_block(text: str):
+    """STRICT fetch detection for worker chat: only a real ```fetch fence counts,
+    so ordinary prose that happens to mention READ/GREP never triggers a read.
+    (The looser parse_fetch_text stays for /worker-explore, whose brief is
+    fetch-only.) Returns the command lines, or None."""
+    body = _parse_fenced(text, "fetch")
+    if not body:
+        return None
+    lines = [l for l in body.splitlines() if l.strip()]
+    return lines or None
 
 
 def parse_fetch_text(text: str):
@@ -425,10 +469,14 @@ if _API_READER0:
 
 
 def _run_worker(user_msg: str, repo: str = "") -> None:
-    """Worker chat turn. If the user explicitly asked to consult the reader,
-    the worker emits a ```consult block (see WORKER_SYSTEM); the server
-    intercepts it, runs the consult, feeds the answer back (capped, text only
-    — same invariant as /forward), and the worker replies to the user."""
+    """Worker chat turn with two tools (see worker_system):
+      fetch   — the worker reads the repo ITSELF whenever answering needs files
+                (autonomous, cheap). Repo bodies go only into a TRANSIENT working
+                context, never the persistent history — the offload invariant.
+      consult — the worker asks the stronger reader, only on the user's explicit
+                request. Its capped answer text is fed back (same as /forward).
+    Only the user message and the final answer join the persistent history; every
+    tool round is transient, so follow-up chat stays lean."""
     global _worker_busy
     with _state_lock:
         if _worker_busy:
@@ -438,8 +486,9 @@ def _run_worker(user_msg: str, repo: str = "") -> None:
         _worker_history.append({"role": "user", "content": user_msg})
         history = list(_worker_history)
     broadcast("worker", {"status": "start", "role": "user", "content": user_msg})
+    root = os.path.abspath(os.path.expanduser(repo or DEFAULT_REPO))
     reader_avail = _API_READER0 is not None or nav is not None
-    system = [{"role": "system", "content": WORKER_SYSTEM}] if reader_avail else []
+    system = [{"role": "system", "content": worker_system(reader_avail, root)}]
 
     def _stream(msgs):
         acc = []
@@ -448,26 +497,44 @@ def _run_worker(user_msg: str, repo: str = "") -> None:
             broadcast("worker", {"status": "delta", "content": tok})
         return "".join(acc)
 
+    working = system + list(history)   # transient; tool rounds append here only
+    final = None
     try:
-        reply = _stream(system + history)
-        question = parse_consult_text(reply) if reader_avail else None
-        if question:
-            with _state_lock:
-                _worker_history.append({"role": "assistant", "content": reply})
-            broadcast("worker", {"status": "consulting", "question": question})
-            root = os.path.abspath(os.path.expanduser(repo or DEFAULT_REPO))
-            answer = consult_once(root, question)
-            content = ("[Reader's answer]\n\n" + answer[:FORWARD_CAP]) if answer \
-                else "[Reader's answer]\n\n(consult failed — tell the user so)"
-            with _state_lock:
-                _worker_history.append({"role": "user", "content": content})
-                history = list(_worker_history)
-            broadcast("worker", {"status": "forwarded", "role": "user",
-                                 "content": content})
-            reply = _stream(system + history)
+        for i in range(WORKER_TOOL_ROUNDS):
+            reply = _stream(working)
+            question = parse_consult_text(reply) if reader_avail else None
+            cmds = None if question else parse_fetch_block(reply)
+            if not question and not cmds:
+                final = reply
+                break
+            working.append({"role": "assistant", "content": reply})   # transient
+            if question:
+                # collapse the streamed consult block into a compact tool line
+                broadcast("worker", {"status": "toolcall", "kind": "consult",
+                                     "summary": "reader に相談: " + question[:120]})
+                broadcast("worker", {"status": "consulting", "question": question})
+                answer = consult_once(root, question)
+                content = ("[Reader's answer]\n\n" + answer[:FORWARD_CAP]) if answer \
+                    else "[Reader's answer]\n\n(consult failed — tell the user so)"
+                working.append({"role": "user", "content": content})   # transient
+            else:
+                names = " | ".join(c.strip() for c in cmds if c.strip())[:300]
+                broadcast("worker", {"status": "toolcall", "kind": "fetch",
+                                     "summary": "repo を読む: " + names})
+                broadcast("fetch", {"names": names, "round": i + 1, "who": "worker"})
+                served = repo_fetch.run_commands(root, cmds)  # repo bodies -> transient
+                broadcast("served", {"bytes": len(served), "round": i + 1,
+                                     "who": "worker"})
+                working.append({"role": "user", "content": served})   # transient
+        else:
+            # tool budget spent — force a final answer from what's been read
+            working.append({"role": "user", "content":
+                            "Stop using tools. Give your best final answer now "
+                            "from what you've gathered."})
+            final = _stream(working)
         with _state_lock:
-            _worker_history.append({"role": "assistant", "content": reply})
-        broadcast("worker", {"status": "done", "content": reply})
+            _worker_history.append({"role": "assistant", "content": final})
+        broadcast("worker", {"status": "done", "content": final})
     except Exception as e:  # noqa: BLE001
         broadcast("worker", {"status": "error", "detail": repr(e)})
     finally:

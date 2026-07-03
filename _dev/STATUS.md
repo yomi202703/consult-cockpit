@@ -24,9 +24,12 @@ P1 実装済み(2026-07-03、decisions 参照):
 
 動くもの（検証済み）:
 - 3レーン(左 reader ミラー / 中央 fetch トラフィック / 右 worker)。
-- consult ▶（reader が repo を読む、~40s）／explore repo ▶（worker が読む、~4–5s）／
-  forward ⇥（reader の回答のみを worker へ、上限8KB）／send（worker 雑談）。
-- 不変条件: repo 本文は worker の永続履歴に入らない（explore は一時 context のみ）。
+- worker 2ツール（2026-07-03）: fetch=repo が要れば worker が自分で読む（自律・安い、
+  ボタン無し）／consult=「ChatGPTに聞いて」の時だけ reader に外注（明示・~40s）。
+  入力は send 1本＋直接聞く ask reader ▶。forward ⇥（reader の回答のみ、上限8KB）。
+- 不変条件: repo 本文は worker の永続履歴に入らない。fetch も consult も各ツールラウンドは
+  transient（_run_worker の working）で、永続履歴に残るのは user turn と最終回答のみ。
+- consult の対話向け堅牢化（2026-07-03）: 待機ハートビート＋上限150s、空応答は error 化。
 - bare python3（venv なし・httpx なし）。doctor は worker-only／通常の両モード緑。
 
 起動:
