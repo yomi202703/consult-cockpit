@@ -37,7 +37,8 @@ P1 実装済み(2026-07-03、decisions 参照):
 - bare python3（venv なし・httpx なし）。doctor は worker-only／通常の両モード緑。
 
 起動:
-- `bash ~/.claude/lib/consult-cockpit/run.sh [repo]`（既定 cwd）→ http://127.0.0.1:8079
+- `bash ~/Projects/consult-cockpit/run.sh [repo]`（既定 cwd）→ http://127.0.0.1:8079
+  （2026-07-03 に ~/.claude/lib から ~/Projects へ移設。外部参照なし・履歴/リモートは無傷）
 - 前提: worker エンドポイント(.env + キーは keychain 推奨)。reader(chatgpt-web + Chrome:9333)は任意。
 - `run.sh doctor` で確認。Chrome autolaunch は off — 上げるのは `ask.py up`。
 
