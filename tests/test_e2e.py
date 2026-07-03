@@ -171,6 +171,22 @@ class E2ETest(unittest.TestCase):
         code, _ = post_json(self.url + "/gemma", {"message": "x"})
         self.assertEqual(code, 404)
 
+    def test_8_session_binds_repo_and_clears_history(self):
+        """A session is ABOUT one repo: POST /session sets it and clears the
+        conversation; subsequent /worker calls use it without a repo param."""
+        code, body = post_json(self.url + "/session", {"repo": self.tmp.name})
+        self.assertEqual(code, 200)
+        self.assertEqual(body["repo"], os.path.abspath(self.tmp.name))
+        s = self.state()
+        self.assertEqual(s["session_repo"], os.path.abspath(self.tmp.name))
+        self.assertEqual(s["worker"], [])                # history cleared
+        code, _ = post_json(self.url + "/worker", {"message": "hi"})  # no repo param
+        self.assertEqual(code, 202)
+        self.assertTrue(wait_until(lambda: any(
+            "MOCK-CHAT" in m["content"] for m in self.state()["worker"])))
+        code, body = post_json(self.url + "/session", {"repo": "/no/such/dir"})
+        self.assertEqual(code, 400)                      # bad repo rejected
+
     def test_7_worker_fetches_repo_itself_transiently(self):
         """Autonomous repo read: when the message needs files, the worker emits
         a ```fetch block, the server serves the repo LOCALLY, and the worker

@@ -208,9 +208,14 @@ def unsubscribe(q: queue.Queue) -> None:
 
 
 # =============================================================================
-# Shared state (worker history + last reader answer)
+# Shared state (session repo + worker history + last reader answer)
 # =============================================================================
+# A conversation is ABOUT one repo (Claude Code's model): the repo is chosen
+# up front (POST /session), fixed for the session, and switching repos starts
+# a new session (history cleared). None until the first pick → the UI shows
+# a landing screen.
 _state_lock = threading.Lock()
+_session_repo: str = ""
 _worker_history: list[dict] = []
 _last_reader_answer: str = ""
 _worker_busy = False
@@ -219,6 +224,28 @@ _worker_busy = False
 def worker_snapshot() -> list[dict]:
     with _state_lock:
         return list(_worker_history)
+
+
+def start_session(repo: str):
+    """Bind a new session to repo: set it and clear the conversation.
+    Returns (http_status, payload)."""
+    global _session_repo, _last_reader_answer
+    root = os.path.abspath(os.path.expanduser(repo))
+    if not os.path.isdir(root):
+        return 400, {"error": f"not a dir: {root}"}
+    with _state_lock:
+        if _worker_busy:
+            return 409, {"error": "worker busy — wait for the current reply"}
+        _session_repo = root
+        _worker_history.clear()
+        _last_reader_answer = ""
+    broadcast("session", {"repo": root, "name": os.path.basename(root)})
+    return 200, {"repo": root}
+
+
+def session_repo() -> str:
+    with _state_lock:
+        return _session_repo
 
 
 # =============================================================================
@@ -699,6 +726,7 @@ class Handler(BaseHTTPRequestHandler):
                                  "has_answer": bool(_last_reader_answer),
                                  "last_answer": _last_reader_answer,
                                  "default_repo": DEFAULT_REPO,
+                                 "session_repo": _session_repo,
                                  "worker_model": wcfg.model if wcfg else "",
                                  "reader_mode": rmode,
                                  "reader_model": rmodel,
@@ -741,8 +769,10 @@ class Handler(BaseHTTPRequestHandler):
     # ---- POST ----
     def do_POST(self):
         body = self._read_json()
-        if self.path == "/consult":
-            repo = body.get("repo") or DEFAULT_REPO
+        if self.path == "/session":
+            return self._json(*start_session(body.get("repo") or ""))
+        elif self.path == "/consult":
+            repo = body.get("repo") or session_repo() or DEFAULT_REPO
             question = (body.get("question") or "").strip()
             if not question:
                 return self._json(400, {"error": "question required"})
@@ -760,7 +790,7 @@ class Handler(BaseHTTPRequestHandler):
             msg = (body.get("message") or "").strip()
             if not msg:
                 return self._json(400, {"error": "message required"})
-            repo = body.get("repo") or DEFAULT_REPO
+            repo = body.get("repo") or session_repo() or DEFAULT_REPO
             threading.Thread(target=_run_worker, args=(msg, repo),
                              daemon=True).start()
             self._json(202, {"queued": True})

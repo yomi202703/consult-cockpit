@@ -2,6 +2,25 @@
 
 過去エントリは書き換えない。
 
+## 2026-07-03 repo はセッション先頭で固定（Claude Code モデル）＋ネイティブ picker
+
+- オーナー提案「Claude Code / Codex みたいに先にフォルダを指定して、指定後は変えられない
+  設計の方が良いんじゃね？」。同意した根拠: 従来は repo がリクエスト毎のパラメータで、
+  会話の途中で差し替え可能 — だが worker の履歴は1本なので、2つの repo の話が1つの履歴に
+  混ざる設計上の嘘があった。「会話は1つの repo についてのもの」に統一する方が正直。
+- 「変えられない」は「セッション中は固定。変更=新規セッション(履歴クリア)」として実装
+  (Claude Code と同じ。永久固定より自然)。
+- 実装: サーバに _session_repo ＋ POST /session {repo}(isdir 検証・busy 中 409・履歴と
+  last_answer をクリア・session イベント broadcast)。/worker /consult は repo param 省略時
+  session_repo に fallback(param は API 互換で残す)。UI は landing(どの repo で始めますか？
+  📁 選択 / パス入力 / 起動フォルダ chip)→ chat(ヘッダーに 📁 repo名 ＋「＋ 新規セッション」)。
+  リロードは /state.session_repo で復元、別タブは session イベントで同期。
+- ネイティブ picker(直前コミット): ブラウザは native ダイアログからパスを取れないが、
+  サーバがローカルなので osascript 'choose folder' で本物の Finder ダイアログを出し
+  POSIX パスを返せる(POST /pick-repo、macOS のみ、cancel は {cancelled})。
+- 教訓: 「会話 × 対象」の cardinality を UI に合わせる。履歴が1本なら対象も1つ。
+  ツールの直感性はここ数ターン一貫して「Claude Code / ChatGPT の既知モデルに寄せる」が正解。
+
 ## 2026-07-03 3レーン → 単一エージェント会話 UI（＋consult 中 live mirror）
 
 - オーナー発案「3分割要らなくない？1で十分。ChatGPT のような agent 対話形式にして、
