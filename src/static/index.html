@@ -212,6 +212,7 @@ ev.onmessage = e => {
       break; }
     case 'mirror': renderMirror(m.turns); break;
     case 'consult':
+      if(m.status==='waiting'){ if(workerBusy) $('wstate').textContent=`reader 考え中… ${m.secs}s`; break; }
       traffic(`<span class="rnd">consult</span> ${esc(m.status)}${m.repo?' · '+esc(m.repo):''}${m.detail?' · '+esc(m.detail):''}`, 'consult');
       break;
     case 'explore':

@@ -2,7 +2,22 @@
 
 過去エントリは書き換えない。
 
-## 2026-07-03 consult は worker の道具に（人間駆動の撤回・入力1本化）
+## 2026-07-03 consult の「固まって見える」修正（無言待機＋古答え返し）
+
+- 症状(オーナー実機): worker 経由 consult で reader(web ChatGPT)が空応答を返すと、
+  nav.wait_complete が「完了(テキストあり)」条件を満たせず最大300秒ポーリング → worker が
+  無言ロックで約5分「固まって見える」。機構自体はデッドロックせず最終的に謝罪応答で回復して
+  いたが、UI に進捗が出ず所要が長すぎた。
+- 原因2件: (1) wait_complete の max_wait=300 は自律エージェント向けで対話には長すぎ。
+  (2) 待機中に broadcast が無く UI 無言。加えて自分の diff レビューで発見した (3) consult
+  失敗時に _last_reader_answer を更新しないため consult_once が前回の古い回答を返す stale bug。
+- 対応: (1) _wait_with_heartbeat — 5秒ごとに consult:waiting{secs} を配信、UI は
+  「reader 考え中… Ns」表示。max_wait=CONSULT_WAIT_CAP(150s)に短縮(対話は速く可視的に失敗)。
+  (2) 空/タイムアウトは consult:error を出し空 answer を配信しない。(3) _run_consult が
+  回答を返し、controller が cmd["result"] に格納、consult_once はグローバルでなくそれを返す
+  (この consult の結果だけを渡す)。
+- 教訓: 人間が張り付く対話経路と、放置される自律経路では適切なタイムアウトが違う。上流
+  (chatgpt-web)の 300s を対話用に上書きするのは cockpit 側の責務。
 
 - オーナー観察: 「人間が ChatGPT に質問を打つことは無い。自然なのは Gemma に
   『ChatGPTに聞いて』と頼むこと」。2026-07-01 の「consult の引き金は人間駆動」決定を、

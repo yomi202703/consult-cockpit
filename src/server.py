@@ -65,6 +65,7 @@ DEFAULT_REPO = os.environ.get("COCKPIT_REPO") or os.getcwd()
 FORWARD_CAP = 8 * 1024        # max reader answer bytes handed to the worker
 MAX_CONSULT_ROUNDS = 8
 WORKER_EXPLORE_ROUNDS = 4     # keep it snappy: the worker explores locally in few rounds
+CONSULT_WAIT_CAP = 150        # per-round wait cap (s) — interactive: fail visibly, don't hang 5 min
 
 _FENCE_RE = re.compile(r"```([\w-]*)\s*\n(.*?)```", re.DOTALL)
 
@@ -222,16 +223,36 @@ class TabController(threading.Thread):
             # a dead ws surfaces here; drop it so we reconnect next tick
             self.ws = None
 
-    def _run_consult(self, root: str, question: str) -> None:
+    def _wait_with_heartbeat(self, after_count):
+        """nav.wait_complete, but emit a 'waiting' tick every few seconds so the
+        UI never looks frozen during a slow reader turn, and bound the wait."""
+        stop = threading.Event()
+
+        def beat():
+            t0 = time.time()
+            while not stop.wait(5):
+                broadcast("consult", {"status": "waiting",
+                                      "secs": int(time.time() - t0)})
+        hb = threading.Thread(target=beat, daemon=True)
+        hb.start()
+        try:
+            return nav.wait_complete(self.ws, self.target,
+                                     after_count=after_count,
+                                     max_wait=CONSULT_WAIT_CAP)
+        finally:
+            stop.set()
+
+    def _run_consult(self, root: str, question: str):
+        """Returns the reader's answer text, or None on failure/empty/timeout."""
         global _last_reader_answer
         if not self._ensure_connected():
             broadcast("consult", {"status": "error",
                                   "detail": "reader tab not reachable"})
-            return
+            return None
         root = os.path.abspath(os.path.expanduser(root))
         if not os.path.isdir(root):
             broadcast("consult", {"status": "error", "detail": f"not a dir: {root}"})
-            return
+            return None
         broadcast("consult", {"status": "start", "repo": os.path.basename(root)})
         try:
             self.ws.evaluate(nav.NEWCHAT_JS)
@@ -241,17 +262,22 @@ class TabController(threading.Thread):
             broadcast("consult", {"status": "briefed"})
             cur = base
             for i in range(MAX_CONSULT_ROUNDS):
-                self.ws, st = nav.wait_complete(self.ws, self.target, after_count=cur)
+                self.ws, st = self._wait_with_heartbeat(cur)
                 cur = st.get("count", cur)
                 self._emit_mirror()
                 cmds = nav.find_fetch(st.get("blocks", []))
                 if not cmds:
                     answer = st.get("text", "").strip()
+                    if not answer:
+                        broadcast("consult", {"status": "error",
+                                              "detail": "reader returned no answer "
+                                              "(timed out or empty)"})
+                        return None
                     with _state_lock:
                         _last_reader_answer = answer
                     broadcast("answer", {"text": answer})
                     broadcast("consult", {"status": "done", "rounds": i})
-                    return
+                    return answer
                 names = " | ".join(l.strip() for l in cmds if l.strip())[:300]
                 broadcast("fetch", {"names": names, "round": i + 1, "who": "reader"})
                 reply = repo_fetch.run_commands(root, cmds)   # repo bodies -> reader only
@@ -259,14 +285,17 @@ class TabController(threading.Thread):
                 broadcast("served", {"bytes": len(reply), "round": i + 1, "who": "reader"})
                 time.sleep(2)
             # ran out of rounds
-            answer = nav.get_state(self.ws).get("text", "").strip()
-            with _state_lock:
-                _last_reader_answer = answer
-            broadcast("answer", {"text": answer, "note": "max_rounds"})
+            answer = nav.get_state(self.ws).get("text", "").strip() or None
+            if answer:
+                with _state_lock:
+                    _last_reader_answer = answer
+                broadcast("answer", {"text": answer, "note": "max_rounds"})
             broadcast("consult", {"status": "done", "rounds": MAX_CONSULT_ROUNDS})
+            return answer
         except Exception as e:  # noqa: BLE001
             broadcast("consult", {"status": "error", "detail": repr(e)})
             self.ws = None
+            return None
 
     def run(self) -> None:
         self._ensure_connected()
@@ -280,7 +309,7 @@ class TabController(threading.Thread):
                 continue
             try:
                 if cmd.get("type") == "consult":
-                    self._run_consult(cmd["repo"], cmd["question"])
+                    cmd["result"] = self._run_consult(cmd["repo"], cmd["question"])
             except Exception:  # noqa: BLE001
                 traceback.print_exc()
             finally:
@@ -375,12 +404,11 @@ def consult_once(root: str, question: str, timeout: float = 600):
     if _API_READER0 is not None:
         return _run_api_consult(root, question)
     if nav is not None:
-        done = threading.Event()
-        _cmd_q.put({"type": "consult", "repo": root, "question": question,
-                    "done": done})
-        if done.wait(timeout):
-            with _state_lock:
-                return _last_reader_answer or None
+        cmd = {"type": "consult", "repo": root, "question": question,
+               "done": threading.Event()}
+        _cmd_q.put(cmd)
+        if cmd["done"].wait(timeout):
+            return cmd.get("result")   # this consult's answer, not a stale global
         return None
     return None
 
