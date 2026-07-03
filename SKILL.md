@@ -47,10 +47,13 @@ value, expanduser'd); the tool is not tied to any particular repo.
 
 ## Portability
 
-Zero third-party deps, no venv. To use on another machine: copy this dir, drop a
-`.env` (or set `COCKPIT_ENV`), store the key with `run.sh auth set worker`, then
-`bash run.sh doctor`. Add the `chatgpt-web` skill + Chrome sign-in only if you
-want the scrape reader.
+Zero third-party deps, no venv (requirements.txt exists only to declare that).
+To use on another machine: copy this dir, drop a `.env` (or set `COCKPIT_ENV`),
+store the key with `run.sh auth set worker` (macOS; on Windows/Linux put it in
+`.env` — the keychain backend degrades cleanly), then `bash run.sh doctor` /
+`run.bat doctor`. Windows launches with `run.bat`; the scrape reader's Chrome
+detection covers Mac/Windows/Linux; the native 📁 folder picker is macOS-only
+(a path input appears instead).
 
 Overrides: `COCKPIT_PYTHON`, `COCKPIT_SCRIPTS` (chatgpt-web scripts dir),
 `COCKPIT_ENV` (.env path), `COCKPIT_PORT` (default 8079), `COCKPIT_REPO`.
