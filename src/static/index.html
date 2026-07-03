@@ -103,6 +103,7 @@
   .rawans pre{margin:0;padding:10px 16px;white-space:pre-wrap;word-break:break-word;
               font:inherit;font-size:14px}
   .note{color:#a3a3a3;font-size:12px;text-align:center;margin:0 0 18px}
+  .warn{color:#c2680c;font-size:12px;text-align:center;margin:0 0 18px}
 
   /* ---- status + composer ---- */
   .footwrap{flex:0 0 auto;padding:0 20px}
@@ -241,10 +242,19 @@ function noteline(text){
   const d=document.createElement('div'); d.className='note'; d.textContent=text;
   feed.appendChild(d); if(stick) scrollDown();
 }
+let ctxWarned=false;
 function setCtx(pct){
   if(pct===undefined||pct===null) return;
   const el=$('ctx'); el.textContent='context '+pct+'%';
-  el.style.color = pct>=70 ? '#c2680c' : '';
+  el.style.color = pct>=90 ? '#d1453b' : pct>=70 ? '#c2680c' : '';
+  if(pct>=90 && !ctxWarned){                    // once per crossing, in-feed, no modal
+    ctxWarned=true;
+    const stick=atBottom();
+    const d=document.createElement('div'); d.className='warn';
+    d.textContent='⚠ context が90%を超えました — 自動圧縮でも収まりにくくなっています。「＋ 新規セッション」への切り替えを推奨';
+    feed.appendChild(d); if(stick) scrollDown();
+  }
+  if(pct<90) ctxWarned=false;                   // re-arm after a compaction shrinks it
 }
 
 // ---- tool cards ----
@@ -318,7 +328,8 @@ function showChat(repoPath){
   $('repoName').textContent = '📁 '+name; $('repoName').title = repoPath;
   $('w').focus();
 }
-function resetFeed(){ feed.innerHTML=''; wCur=null; fetchCard=null; consult=null; }
+function resetFeed(){ feed.innerHTML=''; wCur=null; fetchCard=null; consult=null;
+  ctxWarned=false; $('ctx').textContent=''; $('ctx').style.color=''; }
 async function startSession(path){
   if(!path) return;
   const r = await post('/session', {repo:path});
