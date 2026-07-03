@@ -175,11 +175,10 @@
       <div class="lt">どの repo で始めますか？</div>
       <div class="ls">会話はこの repo についてのものになります（セッション中は固定）</div>
       <button class="lpick" id="lpickBtn" onclick="pickAndStart()">📁 フォルダを選択</button>
-      <div class="lrow">
-        <input id="lpath" spellcheck="false" placeholder="またはパスを入力…">
+      <div class="lrow" id="lrow" style="display:none"><!-- fallback when the native picker is unavailable -->
+        <input id="lpath" spellcheck="false" placeholder="repo のパスを入力…">
         <button class="chip" onclick="startSession($('lpath').value.trim())">開始</button>
       </div>
-      <button class="lchip" id="ldefault" style="display:none" onclick="startSession(this.dataset.path)"></button>
     </div>
   </div>
 </div>
@@ -380,18 +379,12 @@ fetch('/state').then(r=>r.json()).then(s=>{
   if(s.worker_model){ $('wlabel').textContent = s.worker_model; document.title = 'cockpit — '+s.worker_model; }
   if(s.reader_mode==='api') readerName = s.reader_model || 'API reader';
   if(s.reader_mode==='disabled') $('askBtn').style.display='none';
-  if(!s.can_pick) $('lpickBtn').style.display='none';
+  if(!s.can_pick){ $('lpickBtn').style.display='none'; $('lrow').style.display=''; }
   curSid = s.session_id||'';
   loadSessions();
   setCtx(s.context_pct);
   if(s.session_repo) showChat(s.session_repo);          // mid-session reload
-  else {
-    showLanding();
-    if(s.default_repo){                                  // launch dir as a one-click suggestion
-      const c=$('ldefault'); c.style.display='';
-      c.dataset.path=s.default_repo; c.textContent='起動フォルダで始める: '+s.default_repo;
-    }
-  }
+  else showLanding();
   applyReaderName();
 }).catch(()=>{ showLanding(); });
 applyReaderName();
