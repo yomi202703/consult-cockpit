@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<!--
+  consult-cockpit LOGIC VIEW — 対象=この道具が今どう動くか。
+  view≠真実(生成物)。地の文は平易語(内部語ゼロ)、駆動プロンプトは逐語で全文、
+  設計の決まりは流れ図に注釈で溶かし、各決まりの背景は畳んだトグル(<details>)で開いた時だけ。
+  描画(CSS)は触らない。ソースの版が変われば作り直して上書き。
+-->
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>consult-cockpit — この仕組みは今こう動く</title>
+<style>
+  :root{--ink:#1a1d21;--muted:#6b727b;--line:#d7dce1;--bg:#fbfcfd;--card:#fff;--accent:#2d6cdf;--ok:#2c7a4b;
+    --src:#1f2429;--gen:#2d6cdf;--ship:#6b727b;--human:#2c7a4b;--note:#7a3ea8;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;
+    color:var(--ink);background:var(--bg);line-height:1.5;font-size:15px}
+  header.top{background:#1f2429;color:#fff;padding:18px 28px}
+  header.top h1{margin:0;font-size:18px;font-weight:700}
+  header.top .sub{margin-top:4px;color:#aeb6bf;font-size:12.5px}
+  main{max-width:900px;margin:0 auto;padding:16px 24px 56px}
+  .stamp{display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:#eef3f8;border:1px solid #d4e0ec;
+    border-radius:8px;padding:8px 12px;font-size:12px;color:#3a3f45;margin-bottom:18px}
+  .stamp .rev{font-family:ui-monospace,monospace;font-weight:700;color:var(--accent)}
+  .lead{font-size:14px;color:#3a3f45;margin:0 0 16px}
+  h2{font-size:13.5px;margin:22px 0 10px;padding-bottom:5px;border-bottom:2px solid var(--ink)}
+
+  .board{border:1px solid var(--line);border-radius:12px;background:#fdfefe;padding:14px 14px 4px;margin:0 0 8px}
+  .frame-cap{display:flex;gap:10px 14px;flex-wrap:wrap;align-items:flex-start;
+    background:#f4f7fa;border:1px dashed #c3d0dc;border-radius:9px;padding:8px 12px}
+  .frame-cap.top{margin:0 0 14px} .frame-cap.bottom{margin:12px 0 10px}
+  .frame-cap .fl{font-size:10px;font-weight:700;letter-spacing:.05em;color:#8a929b;white-space:nowrap;padding-top:2px}
+  .wp{font-size:12px;color:#3a3f45}
+  .wp b{font-weight:700} .wp .m{color:var(--muted)}
+
+  .rail{display:flex;flex-direction:column}
+  .col{display:grid;grid-template-columns:minmax(240px,300px) 1fr;column-gap:18px;row-gap:10px;align-items:start}
+  .col>.node{grid-column:1}
+  .node{border:1px solid var(--line);border-top:3px solid var(--line);border-radius:9px;background:var(--card);
+    padding:8px 11px;min-height:62px}
+  .node .lab{font-size:11px;font-weight:700;color:#fff;border-radius:7px;padding:1px 8px;display:inline-block;margin-bottom:5px}
+  .node .core{font-size:12.5px;font-weight:600}
+  .node.src{border-top-color:var(--src)} .node.src .lab{background:var(--src)}
+  .node.gen{border-top-color:var(--gen)} .node.gen .lab{background:var(--gen)}
+  .node.ship{border-top-color:var(--ship)} .node.ship .lab{background:var(--ship)}
+  .node.human{border-top-color:var(--human)} .node.human .lab{background:var(--human)}
+  .src-rows{display:flex;flex-direction:column;gap:3px;margin-top:2px}
+  .src-rows .r{font-size:11.5px;border-left:2px solid var(--src);padding:1px 0 1px 7px;color:#3a3f45}
+  .src-rows .merge{font-size:10.5px;color:var(--muted);margin-top:1px}
+
+  .edge{display:flex;flex-direction:row-reverse;justify-content:flex-end;align-items:center;gap:10px;margin:8px 0 8px 14px}
+  .edge .verb{font-size:10.5px;color:var(--muted);line-height:1.3}
+  .edge .arw{font-size:19px;color:var(--gen);line-height:1;transform:rotate(90deg)}
+
+  .pin{position:relative;grid-column:2;margin:0;border:1px solid var(--line);border-radius:8px;background:#fbfcfd;padding:7px 10px}
+  .pin::before{content:"";position:absolute;top:15px;left:-18px;width:18px;height:2px;background:var(--line)}
+  .pin .tag{font-size:9px;font-weight:700;letter-spacing:.05em;color:#fff;background:#9aa2ab;border-radius:5px;padding:1px 5px;margin-right:6px;vertical-align:1px}
+  .pin .pt{font-weight:700;font-size:12px} .pin .pd{color:var(--muted);font-size:11.5px;margin-top:2px}
+
+  .branch{position:relative;grid-column:2;margin:0;border:1px dashed #e0d3ef;background:#f8f4fc;border-radius:8px;
+    padding:6px 10px;font-size:11.5px;color:var(--note)}
+  .branch::before{content:"";position:absolute;top:13px;left:-18px;width:18px;height:2px;background:#d9c8ec}
+
+  @media(max-width:760px){
+    .col{grid-template-columns:1fr}
+    .col>.node,.pin,.branch{grid-column:1}
+    .pin::before,.branch::before{display:none}
+    .edge{margin-left:0;justify-content:center;flex-direction:row}
+  }
+
+  details.why{margin-top:7px;border-top:1px dashed var(--line);padding-top:6px}
+  details.why>summary{cursor:pointer;font-size:11px;font-weight:700;color:var(--accent);list-style:none;user-select:none}
+  details.why>summary::-webkit-details-marker{display:none}
+  details.why>summary::before{content:"\25b8 背景"}
+  details.why[open]>summary::before{content:"\25be 背景"}
+  details.why>summary span{display:none}
+  details.why .wb{font-size:12px;color:#3a3f45;margin-top:6px;line-height:1.55}
+
+  .pr{margin:10px 0 14px}
+  .pr .ph{font-size:11px;font-weight:700;color:#fff;background:var(--note);border-radius:7px;padding:1px 9px;display:inline-block;margin-bottom:6px}
+  .pr .pm{font-size:12px;color:var(--muted);margin:0 0 6px}
+  .pr pre{margin:0;background:#1f2429;color:#e6e9ec;border:1px solid #2c333a;border-radius:9px;
+    padding:12px 14px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.55;
+    white-space:pre-wrap;word-break:break-word;overflow-x:auto}
+  /* 逐語ブロックの編集面(localhost 配信+保存サーバー疎通時のみ JS が pre をこれに置換) */
+  .pr textarea.edit-ta{display:block;width:100%;box-sizing:border-box;margin:0;background:#1f2429;color:#e6e9ec;
+    border:1px solid #4a5560;border-radius:9px;padding:12px 14px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.55;resize:vertical}
+  .pr .edit-badge{font-size:10.5px;color:#2c7a4b;background:#eef6f1;border:1px solid #cfe3d7;border-radius:7px;padding:1px 8px;margin-left:8px}
+  .pr .edit-badge.off{color:#c0392b;background:#fdeeec;border-color:#f0c6bf}
+  code{font-family:ui-monospace,monospace;font-size:12px;background:#eef1f4;padding:1px 5px;border-radius:4px}
+  footer{max-width:900px;margin:0 auto;padding:12px 24px;color:var(--muted);font-size:12px;border-top:1px solid var(--line)}
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>consult-cockpit — この仕組みは今こう動く</h1>
+  <div class="sub">状態の羅列でなく「今こう動く」を1枚の図で。決まりは図に溶かし、駆動プロンプトは下に全文そのまま。</div>
+</header>
+<main>
+  <div class="stamp">
+    <span>ソースの版 <span class="rev">c41732b43abe</span></span><span>2026-07-03 時点</span>
+    <span style="margin-left:auto;color:#6b727b">今のソースの版がこれと違えば、このページは古い → 作り直す</span>
+  </div>
+
+  <div class="lead">やること = 手元の小さなモデルにコードの置き場について質問すると、モデルが必要なファイルを自分で読みながら答える。読んだ中身はその回答の間だけ使い、次に持ち越す会話には質問と答えだけを残す。だからモデルの小さな記憶のまま、大きな置き場を相手にできる。実装の正はコード側にあり、これはそこから起こした説明。</div>
+
+  <h2>データの流れ(決まりは図に注釈で溶かした)</h2>
+  <div class="board">
+    <div class="frame-cap top">
+      <span class="fl">図全体の前提</span>
+      <span class="wp"><b>人が話す相手は1つだけ</b> <span class="m">人が言葉を交わすのは小さい方のモデルだけ。ファイルを読むのも、強いモデルに聞くのも、その回答を作る間だけモデルが手を伸ばす「道具」であって、人が直接触る面ではない。</span></span>
+    </div>
+
+    <div class="rail">
+      <div class="col">
+        <div class="node src"><span class="lab">① 源(これが正)</span>
+          <div class="src-rows">
+            <div class="r">人が打つ質問</div>
+            <div class="r">ディスク上のコードの置き場(読み取りのみ)</div>
+            <div class="r">強い方のモデル(明示で頼まれた時だけ・任意)</div>
+            <div class="merge">↳ この会話は1つの置き場についての1本</div>
+          </div>
+        </div>
+      </div>
+      <div class="edge"><span class="verb">質問が届く →<br>小さいモデルが答え始める</span><span class="arw">▶</span></div>
+      <div class="col">
+        <div class="node gen"><span class="lab">② 加工(仕組みの芯)</span>
+          <div class="core">小さいモデルが答える。足りなければ「このファイルを読んで」と注文し、読み直してまた続ける。1回の質問で最大5往復まで。</div>
+        </div>
+        <div class="pin"><span class="tag">決まり</span><span class="pt">モデルはファイルに触らない — 文字で注文するだけ</span>
+          <div class="pd">モデルは「このパスを読んで」と決まった書式の文章を書くだけ。実際にディスクを読むのは別の読み取り専用の係で、係は置き場の外に出るパスを弾く。モデル自身はファイルにもコマンドにも一切触れない。</div>
+        </div>
+        <div class="pin"><span class="tag">決まり</span><span class="pt">自分で読むのは自由・強い方への相談は明示の時だけ</span>
+          <div class="pd">足りない情報は自分でどんどん読む(手元で安いので自由に)。だが強い方のモデルに回すのは、人がはっきりそう頼んだ時だけ(遅く高いので温存し、要点だけ持ち帰る)。</div>
+          <details class="why"><summary><span>背景</span></summary>
+            <div class="wb">読むのと相談するのを同じ重さにすると、小さいモデルが何でも強い方に丸投げして遅く高くなる。逆に全部自分で読ませると弱いモデルの限界に当たる。そこで「読むのは自律で安く何度でも、強い方は人が名指しした時だけ」という非対称に固定した。強い方の答えは要点だけ短く切り詰めて持ち帰る。</div></details>
+        </div>
+      </div>
+      <div class="edge"><span class="verb">読んで注文して、を繰り返し<br>最後に文章で答える</span><span class="arw">▶</span></div>
+      <div class="col">
+        <div class="node ship"><span class="lab">③ 出力</span>
+          <div class="core">人へ = モデルの最終回答。<br>画面へ = どのファイルを何バイト読んだか(名前と量だけ)。</div>
+        </div>
+        <div class="pin"><span class="tag">決まり</span><span class="pt">残す会話は「質問と最終回答」だけ・中身はその回限りで消える</span>
+          <div class="pd">1回の回答を作る間、読んだファイルの中身は使い捨ての作業机に積まれ、回答が終わると机ごと捨てる。次に持ち越す会話には人の質問と最終回答しか残さない。痩せているのは回をまたぐ会話の方で、1回分の作業机はその回だけ膨らむ。</div>
+          <details class="why"><summary><span>背景</span></summary>
+            <div class="wb">この道具の狙いは「小さな記憶のモデルで大きな置き場を扱う」こと。読んだファイルの中身を会話に積み続けると、数回のやり取りで小さな記憶が埋まってしまう。だから中身は回答を作る間だけの使い捨てにして、記憶に残すのは質問と答えという要点だけにした。これが道具全体が成り立つ核の決まり。</div></details>
+        </div>
+        <div class="pin"><span class="tag">決まり</span><span class="pt">画面は中身を持たない — 読んだ事実だけ</span>
+          <div class="pd">画面に流れるのは読んだファイルの名前とバイト数だけで、中身そのものは一度も画面に出さない。「誰がどのファイルを読んだか」が見えることこそがこの道具の売り。</div>
+        </div>
+        <div class="branch">↺ 会話が記憶の上限まで伸びる → 古いやり取りをひとまとめの要約に畳んで続ける(要約に失敗した時は畳まず、そのまま続ける)</div>
+      </div>
+      <div class="edge"><span class="verb">画面に流す /<br>人が読み、また質問する</span><span class="arw">▶</span></div>
+      <div class="col">
+        <div class="node human"><span class="lab">④ 受け手</span>
+          <div class="core">人がブラウザで読む。回答と並んで「どのファイルを読んだか」がカードで見える。過去の会話は横に残り、いつでも再開できる。</div>
+        </div>
+        <div class="pin"><span class="tag">決まり</span><span class="pt">会話は1つの置き場に固定・過去の会話は残る</span>
+          <div class="pd">相手にする置き場は会話の頭で1つ選んで固定し、変えたい時は新しい会話を始める。会話はディスクに保存され、再起動しても横の一覧から再開できる。</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="frame-cap bottom">
+      <span class="fl">図全体の総括</span>
+      <span class="wp"><b>小さいモデルを何度も安く・強いモデルは要点だけ</b> <span class="m">小さなモデルを何度も安く回し、読んだ中身は回ごとに蒸発させる。だから小さな記憶のまま大きな置き場を扱える。強いモデルは人が名指しした時だけ呼び、その要点だけを持ち帰る。</span></span>
+    </div>
+  </div>
+
+  <h2>これを動かしているプロンプト(全文・逐語)</h2>
+  <p class="pm" style="margin:0 0 8px;font-size:12px;color:#6b727b">下は要約でなく、上の「② 加工」を動かしている指示の本文そのまま。一字一句が挙動 — ここだけは平易化せず無改変で載せる。どちらもコードの中に書かれた文字列(単体ファイルではない)ので、その場では編集できない。</p>
+
+  <div class="pr">
+    <span class="ph">② 加工を駆動 — 小さいモデルに毎回渡す道具の指示(全文)</span>
+    <p class="pm">1回ごとに先頭へ差し込まれ、会話には残さない。「Repo root」の行だけは今の置き場の絶対パスが埋まる。強いモデルへの相談が使える構成では、下半分の相談の段も付く。</p>
+    <pre>You are the worker assistant of a cockpit over a code repository at the path given as 'Repo root'. You answer the user about this repo.
+Repo root: &lt;今の置き場の絶対パス&gt;
+TOOL fetch — read the repository yourself. Whenever answering needs to see files, output EXACTLY ONE fenced code block tagged fetch, one command per line, and nothing else:
+```fetch
+READ &lt;relpath&gt;            full file (capped)
+READ &lt;relpath&gt; &lt;a&gt;-&lt;b&gt;    only lines a..b
+GREP &lt;regex&gt; [reldir]     search file contents
+LS [reldir]               list a directory
+TREE [reldir]             tree under a directory
+```
+Paths are relative to the repo root. Ask only for what you need (&lt;=8 items). The contents come back in the next message; then either fetch more or give your answer. Do not invent file contents — fetch to be sure. Skip fetching for small talk.
+TOOL consult — ask the stronger reader model to study the repo, but ONLY when the user explicitly asks you to (e.g. asks you to ask ChatGPT, the reader, or a stronger model). Then output EXACTLY ONE fenced block tagged consult with one self-contained question in English, and nothing else:
+```consult
+&lt;question&gt;
+```
+Do not paste file contents into the question; the reader reads the repo itself. Its reply comes back as a message starting with [Reader's answer].
+Emit at most one tool block per reply, and nothing else in that reply. Otherwise converse normally in the user's language.</pre>
+  </div>
+
+  <div class="pr">
+    <span class="ph">② の枝(強い方への相談)を駆動 — 強いモデルに渡す依頼文(全文)</span>
+    <p class="pm">人が「強い方に聞いて」と頼んだ時だけ発火する。強いモデルにも同じ読み取りの書式を渡し、置き場のファイル一覧と質問を添える。本文(Repo root / File tree / Task の各行)は下の指示文の後に続けて埋まる。</p>
+    <pre>You are helping me work on a code repository. You cannot touch the filesystem; a local read-only agent fetches repo contents for you on request.
+
+When you want to inspect the repo, output EXACTLY ONE fenced code block tagged `fetch`, one command per line:
+  READ &lt;relpath&gt;            full file (capped)
+  READ &lt;relpath&gt; &lt;a&gt;-&lt;b&gt;    only lines a..b
+  GREP &lt;regex&gt; [reldir]     search file contents
+  LS [reldir]               list a directory
+  TREE [reldir]             tree under a directory
+Rules: paths are relative to the repo root and must stay inside it; ask only for what you need (&lt;= 8 items per turn); prefer line ranges for large files. I will reply with the contents. When you are not fetching, just talk normally (no fetch block). When you have a fix, give a unified diff or the full updated file. Reason and answer in English, even if the task text below is in another language.
+
+Repo root: &lt;置き場のフォルダ名&gt;
+
+File tree:
+&lt;フィルタ済みのファイルツリー&gt;
+
+Task:
+&lt;人 or 小さいモデルが投げた質問&gt;</pre>
+  </div>
+</main>
+<script>
+/* 逐語プロンプトの編集面 — この <script> は描画層の一部、触らず据え置く。
+   serve.py(配信+保存)越しに開いた時だけ、data-src 付き .pr の pre を textarea に置換して
+   Cmd+S → POST /save で元の .md に書き戻す。読込時はディスクの今を表示(焼き込みより新しい)。
+   file:// やサーバー不達では読み取り専用のまま(編集できたのに保存できない事故を塞ぐ)。
+   保存は読んだ時のハッシュ添付の丸ごと置換 ── ディスクが先に変わっていたら 409 で拒否される。
+   このページの逐語ブロックはコード内の文字列(単体 .md でない)ので data-src は無く、常に読み取り専用。 */
+(function(){
+  if (location.protocol !== 'http:' && location.protocol !== 'https:') return;
+  document.querySelectorAll('.pr[data-src]').forEach(async function(block){
+    var pre = block.querySelector('pre');
+    var src = block.dataset.src;
+    var badge = document.createElement('span');
+    badge.className = 'edit-badge';
+    block.querySelector('.ph').after(badge);
+    var res = null;
+    try { res = await fetch('/file?src=' + encodeURIComponent(src)); } catch (e) {}
+    if (!res || !res.ok) { badge.textContent = '保存サーバー停止中 — 読み取り専用'; badge.classList.add('off'); return; }
+    var j = await res.json();
+    var baseSha = j.sha;
+    var ta = document.createElement('textarea');
+    ta.className = 'edit-ta';
+    ta.value = j.content;
+    ta.spellcheck = false;
+    pre.replaceWith(ta);
+    var idle = '編集可 — Cmd+S で ' + src + ' に保存';
+    badge.textContent = idle;
+    function fit(){ var y = window.scrollY; ta.style.height = 'auto'; ta.style.height = (ta.scrollHeight + 4) + 'px'; window.scrollTo(0, y); }
+    fit(); ta.addEventListener('input', fit);
+    function flash(msg, bad){
+      badge.textContent = msg; badge.classList.toggle('off', !!bad);
+      if (!bad) setTimeout(function(){ badge.textContent = idle; badge.classList.remove('off'); }, 2500);
+    }
+    ta.addEventListener('keydown', async function(e){
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 's') return;
+      e.preventDefault();
+      var r = null;
+      try {
+        r = await fetch('/save', {method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({src: src, base_sha: baseSha, content: ta.value})});
+      } catch (e2) {}
+      if (r && r.ok) { baseSha = (await r.json()).sha; flash('保存した → ' + src); }
+      else if (r && r.status === 409) { flash('保存拒否 — ファイルが別の場所で変わっている。再読込して', true); }
+      else { flash('保存失敗 — サーバーに届かない', true); }
+    });
+  });
+})();
+</script>
+<footer>
+  これは「今こう動く」の説明(状態の羅列でない)。ソースの版 <code>c41732b43abe</code>、違えば作り直す。
+</footer>
+</body>
+</html>

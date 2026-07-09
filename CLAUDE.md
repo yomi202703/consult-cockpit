@@ -66,3 +66,11 @@ the worker's small context survives. Rationale: `_dev/decisions.md` (2026-07-01,
   concurrent.
 - Governance lives in `_dev/` (STATUS / decisions / TODO), the owner's convention —
   not `docs/`.
+
+## ivy view layer
+- `.ivy/` (renamed from `.lavish/`, 2026-07-09) holds the human-facing generated
+  views (committed; generated state like *.seen.html / attachments is ignored).
+  View server: `sh .ivy/serve.sh` — this repo's assigned port is 8080 (NOT 8079,
+  which the cockpit app itself uses; leave the server alone if already up). At
+  session start, stand this repo's strikes watcher as a harness background task —
+  procedure: ivy's reference/onboarding.md; cross-repo rules: global CLAUDE.md.

@@ -9,3 +9,11 @@ __pycache__/
 
 # macOS
 .DS_Store
+
+# ivy workspace(.ivy/)— view 本体(*.html)はコミットする(恒久的な閲覧面)
+.ivy/*.seen.html
+.ivy/*.layout.json
+.ivy/attachments/
+.ivy/.watch-snap
+.ivy/agent-chat.md
+.ivy/serve.log
